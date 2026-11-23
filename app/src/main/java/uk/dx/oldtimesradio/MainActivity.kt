@@ -38,6 +38,13 @@ class MainActivity : Activity() {
     private var stations: List<RadioStation> = emptyList()
     private var downloadReceiver: android.content.BroadcastReceiver? = null
     private var pendingInstall = -1L   // build waiting for the user to allow installs
+    /** Winds the sleep knob's pointer back as the minutes run down, while the timer is on. */
+    private val sleepClock = object : Runnable {
+        override fun run() {
+            showSleep()
+            if (StreamService.sleepAt != 0L) tonePlate.postDelayed(this, 5_000L)
+        }
+    }
 
     /** Keeps the set in step with the stream service, and reports a failed tune-in. */
     private val streamListener: () -> Unit = {
@@ -82,7 +89,8 @@ class MainActivity : Activity() {
         lid.addView(TextView(this).apply {
             textSize = 15f; typeface = Typeface.SERIF; setTextColor(Radio.CREAM); alpha = 0.9f; setPadding(0, dp(2), 0, dp(8))
             text = "Tap a station to play it. The first five sit on the set's buttons. " +
-                "Long-press a station (or its button) to change, move or remove it."
+                "Long-press a station (or its button) to change, move or remove it. " +
+                "Tap the SLEEP knob to have the set fade out and switch itself off after 15, 30, 60 or 90 minutes."
         })
         log = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         lid.addView(log)
@@ -123,7 +131,6 @@ class MainActivity : Activity() {
         StreamService.listen(streamListener)
         volumeControlStream = android.media.AudioManager.STREAM_MUSIC   // volume keys turn the set up and down
 
-        if (savedInstanceState == null) autoUpdate()
         // Offer to install an update as soon as its download finishes.
         val receiver = object : android.content.BroadcastReceiver() {
             override fun onReceive(c: android.content.Context, i: Intent) {
@@ -149,7 +156,7 @@ class MainActivity : Activity() {
         }
         val upper = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(170))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(210))
         }
         upper.addView(GrilleView(this).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.6f)
@@ -159,6 +166,7 @@ class MainActivity : Activity() {
             onToggle = { _, on -> setSound(on) }
             mood = Mood.on
             onMood = { on -> setMood(on) }
+            onSleep = { turnSleepKnob() }
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply { leftMargin = dp(10) }
         }
         upper.addView(tonePlate)
@@ -206,6 +214,28 @@ class MainActivity : Activity() {
             }
         }
         renderLog()
+        showSleep()
+    }
+
+    /** The sleep knob follows the timer; its clock runs only while the timer is on. */
+    private fun showSleep() {
+        tonePlate.sleepMinutes = StreamService.sleepLeftMs() / 60_000f
+        tonePlate.removeCallbacks(sleepClock)
+        if (StreamService.sleepAt != 0L) tonePlate.postDelayed(sleepClock, 5_000L)
+    }
+
+    /** A tap on the SLEEP knob turns it on to the next mark (15, 30, 60, 90 minutes, then OFF). */
+    private fun turnSleepKnob() {
+        val on = StreamService.state == StreamService.State.PLAYING || StreamService.state == StreamService.State.TUNING
+        if (!on && StreamService.sleepAt == 0L) {
+            Toast.makeText(this, "Switch a station on first, then set the sleep timer.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        Sfx.detent(this)
+        val minutes = Sleep.next(StreamService.sleepLeftMs() / 60_000f)
+        StreamService.setSleep(this, minutes)
+        Toast.makeText(this, if (minutes == 0) "Sleep timer off"
+            else "The set will fade out and switch off in $minutes minutes", Toast.LENGTH_SHORT).show()
     }
 
     /** A station: play it, or switch off if it's the one playing. An empty button offers to add one. */
@@ -404,6 +434,12 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         showState()
+        // Look for a new build every time the app opens, and again on coming back to it
+        // after a while (at most once an hour).
+        if (System.currentTimeMillis() - lastUpdateCheck > 60 * 60_000L) {
+            lastUpdateCheck = System.currentTimeMillis()
+            autoUpdate()
+        }
         // Back from allowing Old Times Radio to install apps: carry on with the install.
         if (pendingInstall > 0 && Updater.canInstall(this)) {
             val build = pendingInstall
@@ -413,6 +449,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        tonePlate.removeCallbacks(sleepClock)
         StreamService.unlisten(streamListener)
         downloadReceiver?.let { runCatching { unregisterReceiver(it) } }
         super.onDestroy()
@@ -493,5 +530,10 @@ class MainActivity : Activity() {
                 }
             }
         }.start()
+    }
+
+    private companion object {
+        /** Last update check this run (wall clock ms); kept across screen rotations. */
+        var lastUpdateCheck = 0L
     }
 }

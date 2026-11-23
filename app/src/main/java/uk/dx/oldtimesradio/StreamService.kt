@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -127,6 +128,44 @@ class StreamService : Service() {
             return 0f
         }
 
+        // ---- The sleep timer: counts down on the main thread while the set plays, fades
+        // the sound out over the last half-minute, then switches the set off.
+
+        /** When the set goes to sleep (elapsedRealtime ms), or 0 if the timer is off. */
+        var sleepAt = 0L; private set
+        private val clock = Handler(Looper.getMainLooper())
+        private var appCtx: Context? = null
+
+        fun sleepLeftMs(): Long = if (sleepAt == 0L) 0L else (sleepAt - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+
+        /** Sets the timer to [minutes] from now (0 turns it off). Main thread only. */
+        fun setSleep(ctx: Context, minutes: Int) {
+            appCtx = ctx.applicationContext
+            clock.removeCallbacks(sleepTick)
+            sleepAt = if (minutes > 0) SystemClock.elapsedRealtime() + minutes * 60_000L else 0L
+            current?.applySound()
+            if (sleepAt != 0L) clock.post(sleepTick)
+            listeners.toList().forEach { it() }
+        }
+
+        private val sleepTick = object : Runnable {
+            override fun run() {
+                if (sleepAt == 0L) return
+                val left = sleepLeftMs()
+                current?.applySound()   // the fade
+                if (left <= 0L) {
+                    sleepAt = 0L
+                    appCtx?.let { stop(it) }
+                    listeners.toList().forEach { it() }
+                    return
+                }
+                clock.postDelayed(this, if (left <= Sleep.FADE_MS) 250L else minOf(left - Sleep.FADE_MS, 15_000L))
+            }
+        }
+
+        /** The set went off some other way: the timer goes back to OFF. */
+        private fun clearSleep() { sleepAt = 0L; clock.removeCallbacks(sleepTick) }
+
         fun stop(ctx: Context) {
             if (state == State.OFF) return
             ctx.startService(Intent(ctx, StreamService::class.java).setAction(ACTION_STOP))
@@ -241,13 +280,15 @@ class StreamService : Service() {
         }
     }
 
-    /** Follows the SOUND switch: full volume when on, silent when off. */
+    /** Follows the SOUND switch (full volume when on, silent when off), and the sleep timer's fade. */
     private fun applySound() {
-        player?.volume = if (Store.sound(this)) 1f else 0f
+        val fade = if (sleepAt == 0L) 1f else Sleep.fade(sleepLeftMs())
+        player?.volume = if (Store.sound(this)) fade else 0f
     }
 
     private fun shutDown(keepError: Boolean = false) {
         player?.release(); player = null
+        clearSleep()
         if (!keepError) set(State.OFF, null)
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -256,6 +297,7 @@ class StreamService : Service() {
     override fun onDestroy() {
         if (current === this) current = null
         player?.release(); player = null
+        clearSleep()
         if (state != State.ERROR) set(State.OFF, null)
         super.onDestroy()
     }

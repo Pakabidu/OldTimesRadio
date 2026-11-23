@@ -219,8 +219,9 @@ class GrilleView(ctx: Context) : CabinetView(ctx) {
 
 /**
  * Narrow chrome plate of big, well-used rocker switches (SOUND), each with a jewel
- * lamp, plus the MOOD LIGHT knob in the first of the two round sockets.
- * The rockers and the knob are real toggles.
+ * lamp, the MOOD LIGHT knob, and the SLEEP timer knob in the second socket. The rockers
+ * and the mood knob are real toggles; tapping the sleep knob turns it to the next mark,
+ * and its pointer winds back towards OFF as the time runs down, like a clockwork timer.
  */
 class TonePlateView(ctx: Context) : CabinetView(ctx), MoodGlow {
     var switches: List<Pair<String, Boolean>> = emptyList()
@@ -229,6 +230,10 @@ class TonePlateView(ctx: Context) : CabinetView(ctx), MoodGlow {
     var mood = false
         set(v) { field = v; invalidate() }
     var onMood: ((Boolean) -> Unit)? = null
+    /** Minutes left on the sleep timer (0 = off); drives the knob's pointer and lamp. */
+    var sleepMinutes = 0f
+        set(v) { if (v != field) { field = v; invalidate() } }
+    var onSleep: (() -> Unit)? = null
 
     private val label = paint(Radio.INK) { typeface = Radio.SERIF; textSize = 9f * t; letterSpacing = 0.12f; textAlign = Paint.Align.CENTER }
     private val tiny = paint(Color.rgb(0x2A, 0x28, 0x24)) { typeface = Radio.SERIF; textSize = 5f * t; textAlign = Paint.Align.CENTER }
@@ -241,14 +246,15 @@ class TonePlateView(ctx: Context) : CabinetView(ctx), MoodGlow {
     private val knob = paint()
     private val ridge = paint(Color.argb(0xAA, 0, 0, 0)) { strokeWidth = 1f * d }
     private val socket = paint()
-    private val hole = paint(Color.rgb(0x0C, 0x0B, 0x0A))
-    private val pin = paint(Color.rgb(0x6C, 0x6A, 0x64))
     private val r = RectF()
 
     private val rowH get() = 9 * t + 34 * d
     private fun rowTop(i: Int) = 14 * d + i * rowH
     private val moodY get() = rowTop(switches.size) + 8 * d + 5 * t + 17 * d
     private val moodR get() = 15 * d
+    /** The sleep knob sits under the mood knob, clear of its OFF/ON marks and with its own scale round it. */
+    private val sleepY get() = moodY + moodR + 6 * d + 5 * t + moodR * 1.2f + 12 * d + 5 * t
+    private val sleepMarkR get() = moodR * 1.2f + 4 * d + 2.5f * t
 
     override fun onDraw(c: Canvas) {
         val w = width.toFloat(); val h = height.toFloat()
@@ -257,16 +263,60 @@ class TonePlateView(ctx: Context) : CabinetView(ctx), MoodGlow {
         Hardware.screw(c, w / 2, 7 * d, d)
         for ((i, s) in switches.withIndex()) rockerSwitch(c, w, rowTop(i), s.first, s.second, i)
         moodKnob(c, w / 2, moodY)
-        // The other socket stays empty, as on the real set.
-        val sy = moodY + moodR + 5 * t + 26 * d
-        if (sy + 10 * d < h) {
-            val cx = w / 2
-            socket.shader = LinearGradient(cx - 10 * d, sy - 10 * d, cx + 10 * d, sy + 10 * d,
-                Color.rgb(0xE0, 0xDE, 0xD6), Color.rgb(0x6A, 0x68, 0x62), Shader.TileMode.CLAMP)
-            c.drawCircle(cx, sy, 10 * d, socket)
-            c.drawCircle(cx, sy, 6 * d, hole)
-            c.drawCircle(cx, sy, 2.2f * d, pin)
+        sleepKnob(c, w / 2, sleepY)
+    }
+
+    /**
+     * The sleep timer: a bakelite knob with OFF, 15, 30, 60 and 90 engraved round it and
+     * SLEEP underneath. The pointer shows the minutes left, so it creeps back towards OFF.
+     */
+    private fun sleepKnob(c: Canvas, x: Float, y: Float) {
+        tiny.color = Color.rgb(0x2A, 0x28, 0x24)
+        for ((k, m) in SLEEP_MARKS.withIndex()) {
+            val a = Math.toRadians(SLEEP_ANGLES[k].toDouble())
+            val mx = x + sleepMarkR * kotlin.math.cos(a).toFloat(); val my = y + sleepMarkR * kotlin.math.sin(a).toFloat()
+            c.drawText(if (m == 0) "OFF" else "$m", mx, my + tiny.textSize * 0.36f, tiny)
         }
+        fitText(c, "SLEEP", x, y + moodR * 1.2f + 4 * d + 7 * t, label.apply { textSize = 7f * t }, width - 8 * d)
+        label.textSize = 9f * t
+        socket.shader = LinearGradient(x - moodR * 1.25f, y - moodR * 1.25f, x + moodR * 1.25f, y + moodR * 1.25f,
+            Color.rgb(0xE0, 0xDE, 0xD6), Color.rgb(0x6A, 0x68, 0x62), Shader.TileMode.CLAMP)
+        c.drawCircle(x, y, moodR * 1.2f, socket)
+        knob.shader = RadialGradient(x - moodR * 0.3f, y - moodR * 0.35f, moodR * 1.3f, intArrayOf(Color.rgb(0x5A, 0x40, 0x2E), Color.rgb(0x2A, 0x1C, 0x14), Color.rgb(0x0E, 0x08, 0x05)),
+            null, Shader.TileMode.CLAMP)
+        c.drawCircle(x, y, moodR, knob)
+        for (k in 0 until 24) {   // knurled edge
+            val a = k / 24.0 * Math.PI * 2
+            c.drawLine(x + moodR * 0.82f * kotlin.math.cos(a).toFloat(), y + moodR * 0.82f * kotlin.math.sin(a).toFloat(),
+                x + moodR * kotlin.math.cos(a).toFloat(), y + moodR * kotlin.math.sin(a).toFloat(), ridge)
+        }
+        // A thumb-polished patch on the grip, where it's been turned every night for years.
+        Wear.scuffs(c, RectF(x - moodR, y - moodR, x + moodR, y + moodR), 77, 1, d, alpha = 26)
+        val a = Math.toRadians(sleepAngle(sleepMinutes).toDouble())
+        val px = kotlin.math.cos(a).toFloat(); val py = kotlin.math.sin(a).toFloat()
+        ridge.color = Color.rgb(0xE8, 0xDC, 0xC0); ridge.strokeWidth = 2f * d
+        c.drawLine(x + px * moodR * 0.25f, y + py * moodR * 0.25f, x + px * moodR * 0.8f, y + py * moodR * 0.8f, ridge)
+        ridge.color = Color.argb(0xAA, 0, 0, 0); ridge.strokeWidth = 1f * d
+        val on = sleepMinutes > 0f
+        jewel.shader = RadialGradient(x, y, 3.5f * d, if (on) intArrayOf(Color.WHITE, Mood.LAMP, Color.rgb(0xB0, 0x50, 0x10))
+            else intArrayOf(Color.rgb(0x70, 0x50, 0x38), Color.rgb(0x40, 0x28, 0x18), Color.rgb(0x20, 0x14, 0x0C)), null, Shader.TileMode.CLAMP)
+        c.drawCircle(x, y, 3f * d, jewel)
+    }
+
+    /** Pointer angle for the minutes left: in step with the engraved marks, and in between them. */
+    private fun sleepAngle(min: Float): Float {
+        val m = min.coerceIn(0f, SLEEP_MARKS.last().toFloat())
+        for (k in 1 until SLEEP_MARKS.size) if (m <= SLEEP_MARKS[k]) {
+            val f = (m - SLEEP_MARKS[k - 1]) / (SLEEP_MARKS[k] - SLEEP_MARKS[k - 1])
+            return SLEEP_ANGLES[k - 1] + (SLEEP_ANGLES[k] - SLEEP_ANGLES[k - 1]) * f
+        }
+        return SLEEP_ANGLES.last()
+    }
+
+    private companion object {
+        /** Engraved marks (minutes) and their angles, clockwise from lower left round the top to lower right. */
+        val SLEEP_MARKS = Sleep.MARKS
+        val SLEEP_ANGLES = listOf(140f, 205f, 270f, 335f, 400f)
     }
 
     /** A big bakelite rocker in a chrome escutcheon, with a jewel lamp above it. */
@@ -349,6 +399,7 @@ class TonePlateView(ctx: Context) : CabinetView(ctx), MoodGlow {
             out += Glow(RectF(w / 2 - 6 * d, jy - 6 * d, w / 2 + 6 * d, jy + 6 * d), Mood.LAMP, 0.9f)
         }
         if (mood) out += Glow(RectF(w / 2 - 8 * d, moodY - 8 * d, w / 2 + 8 * d, moodY + 8 * d), Mood.LAMP, 1f)
+        if (sleepMinutes > 0f) out += Glow(RectF(w / 2 - 8 * d, sleepY - 8 * d, w / 2 + 8 * d, sleepY + 8 * d), Mood.LAMP, 0.8f)
         return out
     }
 
@@ -357,6 +408,8 @@ class TonePlateView(ctx: Context) : CabinetView(ctx), MoodGlow {
         if (e.action == MotionEvent.ACTION_UP) {
             if (kotlin.math.hypot(e.x - width / 2f, e.y - moodY) < moodR * 1.6f) {
                 mood = !mood; onMood?.invoke(mood)
+            } else if (kotlin.math.hypot(e.x - width / 2f, e.y - sleepY) < moodR * 1.8f) {
+                onSleep?.invoke()
             } else {
                 val i = ((e.y - rowTop(0)) / rowH).toInt()
                 if (i in switches.indices && e.y >= rowTop(0)) {
