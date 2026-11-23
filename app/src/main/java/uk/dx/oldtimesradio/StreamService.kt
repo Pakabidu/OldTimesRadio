@@ -8,6 +8,8 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -18,7 +20,9 @@ import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Metadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -27,6 +31,9 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.TeeAudioProcessor
+import androidx.media3.session.MediaSession
+import androidx.media3.session.MediaStyleNotificationHelper
+import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.sqrt
@@ -37,6 +44,11 @@ import kotlin.math.sqrt
  * Media3 ExoPlayer, which copes with Shoutcast/Icecast MP3 and AAC streams, takes
  * audio focus (pausing for calls and other apps) and stops if headphones are pulled out.
  * It also measures how loud the stream is, for the meter on the broadcast set.
+ *
+ * A media session tells the rest of the phone what's on: Bluetooth car stereos and
+ * headphones (AVRCP), the lock screen and the media controls all get the song, the
+ * performer and the station ([Tags]), plus the set's picture, and they update with every
+ * new song. A car's next/previous buttons step through the station log.
  */
 @androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 class StreamService : Service() {
@@ -174,6 +186,7 @@ class StreamService : Service() {
     }
 
     private var player: ExoPlayer? = null
+    private var session: MediaSession? = null
     private var name = ""
     private val main = Handler(Looper.getMainLooper())
 
@@ -240,10 +253,17 @@ class StreamService : Service() {
             p.addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(s: Int) = update()
                 override fun onIsPlayingChanged(playing: Boolean) = update()
-                // Shoutcast/Icecast "StreamTitle": the song or programme on now.
-                override fun onMediaMetadataChanged(m: MediaMetadata) {
-                    val t = m.title?.toString()
-                    main.post { if (player != null) { title(t); update() } }
+                // Shoutcast/Icecast "StreamTitle": the song or programme on now. Read from the
+                // raw stream metadata, since the player's own metadata carries our tags.
+                override fun onMetadata(m: Metadata) {
+                    var t: String? = null
+                    for (i in 0 until m.length()) {
+                        val b = MediaMetadata.Builder()
+                        m.get(i).populateMediaMetadata(b)
+                        b.build().title?.toString()?.let { t = it }
+                    }
+                    val icy = t ?: return
+                    main.post { if (player != null) { title(icy); retag(); update() } }
                 }
                 override fun onPlayerError(e: PlaybackException) {
                     main.post {
@@ -253,12 +273,77 @@ class StreamService : Service() {
                 }
             })
             player = p
+            // The media session: Bluetooth, the lock screen and media controls see the set.
+            session = MediaSession.Builder(this, SetPlayer(p))
+                .setSessionActivity(PendingIntent.getActivity(this, 3, Intent(this, MainActivity::class.java),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+                .build()
         }
         set(State.TUNING, url)
-        p.setMediaItem(MediaItem.fromUri(url))
+        p.setMediaItem(MediaItem.Builder().setUri(url).setMediaMetadata(meta(Tags.of(name, null))).build())
         p.prepare()
         p.playWhenReady = true
         applySound()
+    }
+
+    /**
+     * The tags as the media session publishes them. The media item's metadata takes
+     * precedence over what the stream itself says, so cars see exactly these.
+     */
+    private fun meta(t: Tags): MediaMetadata = MediaMetadata.Builder()
+        .setTitle(t.title)
+        .setArtist(t.artist)
+        .setAlbumTitle(t.album)
+        .setDisplayTitle(t.title)
+        .setSubtitle(t.artist)
+        .apply { artwork?.let { setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER) } }
+        .build()
+
+    /** A new song: swap in fresh tags without interrupting the stream. */
+    private fun retag() {
+        val p = player ?: return
+        val item = p.currentMediaItem ?: return
+        val m = meta(Tags.of(name, nowPlaying))
+        if (m.title == item.mediaMetadata.title && m.artist == item.mediaMetadata.artist) return
+        p.replaceMediaItem(p.currentMediaItemIndex, item.buildUpon().setMediaMetadata(m).build())
+    }
+
+    /** The set's own picture (its launcher icon), for car displays that show cover art. */
+    private val artwork: ByteArray? by lazy {
+        runCatching {
+            val dr = ContextCompat.getDrawable(this, R.mipmap.ic_launcher) ?: return@runCatching null
+            val bmp = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
+            dr.setBounds(0, 0, 512, 512); dr.draw(Canvas(bmp))
+            ByteArrayOutputStream().also { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+        }.getOrNull()
+    }
+
+    /** A car's (or headphones') next/previous: the next or previous station in the log. */
+    private fun step(dir: Int) {
+        val list = Store.stations(this)
+        if (list.isEmpty()) return
+        val i = list.indexOfFirst { it.url == url }
+        val st = list[((if (i < 0) 0 else i + dir) % list.size + list.size) % list.size]
+        name = st.name
+        startInForeground("Tuning in…")
+        tune(st.url)
+    }
+
+    /**
+     * The player as the media session sees it: next/previous change station (a live
+     * stream has no tracks to skip), and stop switches the set off.
+     */
+    private inner class SetPlayer(p: Player) : ForwardingPlayer(p) {
+        private val extra = intArrayOf(Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+            Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+        override fun getAvailableCommands(): Player.Commands =
+            super.getAvailableCommands().buildUpon().addAll(*extra).build()
+        override fun isCommandAvailable(command: Int) = command in extra || super.isCommandAvailable(command)
+        override fun seekToNext() = step(1)
+        override fun seekToNextMediaItem() = step(1)
+        override fun seekToPrevious() = step(-1)
+        override fun seekToPreviousMediaItem() = step(-1)
+        override fun stop() { main.post { shutDown() } }
     }
 
     /** ExoPlayer's usual renderers, with the [Meter] tapped into the audio path. */
@@ -288,6 +373,7 @@ class StreamService : Service() {
     }
 
     private fun shutDown(keepError: Boolean = false) {
+        session?.release(); session = null
         player?.release(); player = null
         if (!Caster.connected) clearSleep()   // handed over to a cast speaker: keep counting
         if (!keepError) set(State.OFF, null)
@@ -297,6 +383,7 @@ class StreamService : Service() {
 
     override fun onDestroy() {
         if (current === this) current = null
+        session?.release(); session = null
         player?.release(); player = null
         if (!Caster.connected) clearSleep()   // handed over to a cast speaker: keep counting
         if (state != State.ERROR) set(State.OFF, null)
@@ -311,15 +398,19 @@ class StreamService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val stop = PendingIntent.getService(this, 2, Intent(this, StreamService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        val n: Notification = NotificationCompat.Builder(this, CHANNEL)
+        // Song and performer when the station sends them, else the station and what the set's doing.
+        val tags = Tags.of(name, nowPlaying)
+        val song = tags.title != name
+        val b = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat)
-            .setContentTitle(name)
-            .setContentText(text)
+            .setContentTitle(tags.title)
+            .setContentText(if (song && Store.sound(this)) "${tags.artist} · $name" else text)
             .setContentIntent(open)
             .setOngoing(true)
             .setSilent(true)
             .addAction(0, "Stop", stop)
-            .build()
+        session?.let { b.setStyle(MediaStyleNotificationHelper.MediaStyle(it).setShowActionsInCompactView(0)) }
+        val n: Notification = b.build()
         ServiceCompat.startForeground(this, NOTE_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
     }
 }

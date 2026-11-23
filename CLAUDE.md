@@ -31,7 +31,10 @@ The whole app must feel like **warm, old radio equipment in used condition**: no
 ## How it fits together
 
 - `StreamService`: Media3 ExoPlayer foreground service. It holds the playing state, the
-  ICY "now playing" title, the loudness meter and the sleep timer (fade, then off). The
+  ICY "now playing" title, the loudness meter and the sleep timer (fade, then off). It
+  runs a Media3 `MediaSession` whose metadata (built by `Tags`: song / artist / station)
+  is what Bluetooth AVRCP car stereos show; tags go on the media item (which beats the
+  stream's own), and next/previous step through the log. The
   UI listens via `StreamService.listen`. It finds the playing station by URL, so the log
   can be reordered.
 - `BroadcastSetView`: the meter and the five preset buttons (the first five stations in

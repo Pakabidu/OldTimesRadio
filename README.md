@@ -12,6 +12,8 @@ PropWatch.
 - Long-press to change, move or remove a station; the first five in the log sit on the buttons.
 - Plays Shoutcast/Icecast MP3 and AAC streams in the background, with a notification.
 - SOUND rocker mutes; MOOD LIGHT darkens the room so the dials glow.
+- Bluetooth car stereos, headphones and the lock screen show the song, performer and station
+  (from the stream's "Artist - Title"); the car's next/previous buttons change station.
 - CAST rocker: plays on a Chromecast, Google/Nest speaker or Cast TV on the Wi-Fi (Google's
   Default Media Receiver); the buttons, dial and sleep timer then work the speaker.
 - SLEEP knob: tap for 15, 30, 60 or 90 minutes (then off); the pointer winds back as time runs
