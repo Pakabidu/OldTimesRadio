@@ -18,9 +18,10 @@ import kotlin.math.log10
 import kotlin.math.sin
 
 /**
- * The broadcast set: a lit SWR / power meter in a chrome bezel, its needle swinging with
- * the station's loudness and its lamp warming up as a station tunes in, and an etched
- * chrome plate of black station push-buttons (the first [Stations.PRESETS] in the log).
+ * The broadcast set: a lit SWR / power meter in a chrome bezel with two amber jewel dial
+ * lamps, its needle swinging with the station's loudness and its lamps warming up as a
+ * station tunes in, and an etched chrome plate of black station push-buttons (the first
+ * [Stations.PRESETS] in the log), each under a little backlit window with its name.
  *
  * Tap a station to play it; tap the lit one again to switch off. [onLongPress] fires for
  * a long press (used to change the station on that button).
@@ -30,6 +31,11 @@ class BroadcastSetView(ctx: Context) : CabinetView(ctx), MoodGlow {
         set(v) { field = v; invalidate() }
     var onPress: ((Int) -> Unit)? = null
     var onLongPress: ((Int) -> Unit)? = null
+    /**
+     * Called as the set's lights change: [valves] is how far the valves are lit (0 off,
+     * 1 full) and [level] the meter's reading, for the parts that glow with the set.
+     */
+    var onLight: ((valves: Float, level: Float) -> Unit)? = null
     /** SOUND is off: the set plays on silently, and the dial says so. */
     var muted = false
         set(v) { field = v; startMeter(); invalidate() }
@@ -54,6 +60,7 @@ class BroadcastSetView(ctx: Context) : CabinetView(ctx), MoodGlow {
     private val card = paint()
     private companion object {
         const val OFF_GLOW = 0.22f
+        val DIAL_LAMP = Color.rgb(0xFF, 0xA8, 0x3A)
         /** Where the SWR scale turns red (3:1), and its marks: label to position along the arc. */
         const val SWR_RED = 0.58f
         val SWR_MARKS = listOf("1" to 0f, "1.5" to 0.22f, "2" to 0.38f, "3" to 0.58f, "5" to 0.78f, "∞" to 1f)
@@ -68,6 +75,9 @@ class BroadcastSetView(ctx: Context) : CabinetView(ctx), MoodGlow {
     private val well = paint(Color.argb(0x59, 0, 0, 0))
     private val shine = paint(Color.argb(0x2E, 255, 255, 255))
     private val jewel = paint()
+    private val windowClip = Path()
+    private val windowFrame = paint(Color.rgb(0x1A, 0x17, 0x14)) { style = Paint.Style.STROKE; strokeWidth = 1.2f * d }
+    private val win = RectF()
     private val cols = Stations.PRESETS
     private val dial = RectF(); private val inner = RectF(); private val plate = RectF(); private val r = RectF()
 
@@ -81,6 +91,7 @@ class BroadcastSetView(ctx: Context) : CabinetView(ctx), MoodGlow {
             }
             needle += (target - needle) * (if (target > needle) 0.45f else 0.12f)
             if (needle < 0.002f && !live) needle = 0f
+            light()
             invalidate()
             if (live || needle > 0f) postOnAnimation(this) else ticking = false
         }
@@ -90,7 +101,7 @@ class BroadcastSetView(ctx: Context) : CabinetView(ctx), MoodGlow {
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         dial.set(0f, 0f, w.toFloat(), h * 0.56f)
-        inner.set(dial.left + 5 * d, dial.top + 5 * d, dial.right - 5 * d, dial.bottom - 5 * d)
+        inner.set(dial.left + 7 * d, dial.top + 7 * d, dial.right - 7 * d, dial.bottom - 7 * d)
         plate.set(0f, dial.bottom + 6 * d, w.toFloat(), h.toFloat())
     }
 
@@ -179,7 +190,26 @@ class BroadcastSetView(ctx: Context) : CabinetView(ctx), MoodGlow {
         c.drawCircle(px, inner.bottom - 1 * d, 4 * d, hub)
         // Old glass: dust and a scratch.
         c.save(); c.clipRect(inner); Screen.glass(c, inner, 92, d); c.restore()
+        // Two amber jewel dial lamps set in the bezel's top corners, warming with the set.
+        val lamp = lampColour(g)
+        Hardware.jewel(c, dial.left + 8 * d, dial.top + 8 * d, 3.4f * d, lamp, d)
+        Hardware.jewel(c, dial.right - 8 * d, dial.top + 8 * d, 3.4f * d, lamp, d)
     }
+
+    /** Jewel-lamp glass: a dull brown when cold, glowing amber at full. */
+    private fun lampColour(g: Float) = Radio.mix(Color.rgb(0x4A, 0x2C, 0x16), DIAL_LAMP, g)
+
+    /** How bright each name window is: lit by the dial lamps, the chosen station's brightest. */
+    private fun windowGlow(i: Int): Float {
+        val on = state == StreamService.State.PLAYING || state == StreamService.State.TUNING
+        if (!on) return lampGlow * 0.8f
+        return if (i == playing) lampGlow else 0.25f + 0.35f * lampGlow
+    }
+
+    /** The valves follow the dial lamps, but go fully dark when the set is off. */
+    private fun valves() = ((lampGlow - OFF_GLOW) / (1f - OFF_GLOW)).coerceIn(0f, 1f)
+
+    private fun light() = onLight?.invoke(valves(), needle)
 
     private fun drawPlate(c: Canvas) {
         Hardware.plate(c, plate, 4 * d, d, seed = 94)
@@ -188,7 +218,14 @@ class BroadcastSetView(ctx: Context) : CabinetView(ctx), MoodGlow {
         for (i in 0 until cols) {
             val cx = plate.left + colW * (i + 0.5f)
             val down = i == playing && state != StreamService.State.OFF
-            fitText(c, stations.getOrNull(i)?.let { Stations.label(it.name, it.label) } ?: "", cx, plate.top + 5 * d + label.textSize, label, colW - 4 * d)
+            // The station's name in a little backlit window, lit amber from behind like the dial.
+            nameWindow(c, i, cx, colW)
+            val wg = windowGlow(i)
+            label.color = Screen.gold(wg)
+            fitText(c, stations.getOrNull(i)?.let { Stations.label(it.name, it.label) } ?: "", cx, win.centerY() + label.textSize * 0.36f, label, win.width() - 4 * d)
+            Screen.glass(c, win, 96 + i, d, dust = 6)
+            c.restore()
+            c.drawRoundRect(win, 2.5f * d, 2.5f * d, windowFrame)
             val by = plate.bottom - bs - 7 * d
             r.set(cx - bs / 2 - 2 * d, by - 1 * d, cx + bs / 2 + 2 * d, by + bs + 3 * d)
             c.drawRoundRect(r, 3 * d, 3 * d, well)
@@ -206,7 +243,15 @@ class BroadcastSetView(ctx: Context) : CabinetView(ctx), MoodGlow {
                 null, Shader.TileMode.CLAMP)
             c.drawCircle(r.centerX(), r.centerY(), 2.4f * d, jewel)
         }
-        Wear.rub(c, RectF(plate.left, plate.top, plate.right, plate.top + 6 * d + label.textSize), 95, d, Color.rgb(0xC8, 0xC5, 0xBA), 2)
+    }
+
+    /** Sets [win] to station [i]'s name window, clips to it and lights it (the caller restores). */
+    private fun nameWindow(c: Canvas, i: Int, cx: Float, colW: Float) {
+        win.set(cx - colW / 2 + 3 * d, plate.top + 6 * d, cx + colW / 2 - 3 * d, plate.top + 6 * d + label.textSize + 8 * d)
+        c.save()
+        windowClip.reset(); windowClip.addRoundRect(win, 2.5f * d, 2.5f * d, Path.Direction.CW)
+        c.clipPath(windowClip)
+        Screen.face(c, win, windowGlow(i))
     }
 
     /** Follow the stream service: the meter springs into life when a station plays; warm or dim the lamp. */
@@ -221,24 +266,38 @@ class BroadcastSetView(ctx: Context) : CabinetView(ctx), MoodGlow {
                     addUpdateListener {
                         val v = it.animatedValue as Float
                         lampGlow = 0.35f + 0.25f * (0.5f + 0.5f * sin(v * 6.283f * 3).toFloat()) * (0.7f + 0.3f * sin(v * 6.283f * 7).toFloat())
+                        light()
                         invalidate()
                     }
                     start()
                 }
             }
-            StreamService.State.PLAYING -> animate(lampGlow, 1f, 600, 0) { lampGlow = it }
-            else -> animate(lampGlow, OFF_GLOW, 500, 0) { lampGlow = it }
+            StreamService.State.PLAYING -> animate(lampGlow, 1f, 600, 0) { lampGlow = it; light() }
+            else -> animate(lampGlow, OFF_GLOW, 500, 0) { lampGlow = it; light() }
         }
+        light()
         invalidate()
     }
 
     override fun glows(): List<Glow> {
+        val out = ArrayList<Glow>()
+        // The name windows, each lit from behind.
+        val colW = plate.width() / cols
+        for (i in 0 until cols) {
+            val cx = plate.left + colW * (i + 0.5f)
+            val wr = RectF(cx - colW / 2 + 3 * d, plate.top + 6 * d, cx + colW / 2 - 3 * d, plate.top + 6 * d + label.textSize + 8 * d)
+            out += Glow(wr, Mood.AMBER, 0.3f + 0.6f * windowGlow(i), screen = true, radius = 2.5f * d)
+        }
+        // The dial lamps.
+        for (x in listOf(dial.left + 8 * d, dial.right - 8 * d))
+            out += Glow(RectF(x - 6 * d, dial.top + 2 * d, x + 6 * d, dial.top + 14 * d), DIAL_LAMP, 0.4f + 0.6f * lampGlow)
         // Switched off, the dial keeps a faint warm glow rather than going dead black.
-        if (state == StreamService.State.OFF || state == StreamService.State.ERROR)
-            return listOf(Glow(RectF(inner), Mood.AMBER, 0.45f, screen = true, radius = 6 * d))
-        val out = arrayListOf(Glow(RectF(inner), Mood.AMBER, 0.8f + 0.6f * lampGlow, screen = true, radius = 6 * d))
+        if (state == StreamService.State.OFF || state == StreamService.State.ERROR) {
+            out += Glow(RectF(inner), Mood.AMBER, 0.45f, screen = true, radius = 6 * d)
+            return out
+        }
+        out += Glow(RectF(inner), Mood.AMBER, 0.8f + 0.6f * lampGlow, screen = true, radius = 6 * d)
         if (playing in 0 until cols) {
-            val colW = plate.width() / cols
             val cx = plate.left + colW * (playing + 0.5f)
             val bs = minOf(colW * 0.42f, plate.height() * 0.42f)
             val cy = plate.bottom - bs / 2 - 7 * d

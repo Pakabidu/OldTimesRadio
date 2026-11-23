@@ -6,6 +6,8 @@ swings with the station's loudness, five black station push-buttons on an etched
 a lit "now playing" window, and the station log in the open lid. The cabinet style comes from
 PropWatch.
 
+- Lit like a valve set: amber jewel dial lamps, backlit station-name windows, the valves
+  glowing through the speaker cloth and a green magic eye that opens and closes with the music.
 - Tap a button (or a station in the log) to play; tap the lit one again to switch off.
 - Long-press to change, move or remove a station; the first five in the log sit on the buttons.
 - Plays Shoutcast/Icecast MP3 and AAC streams in the background, with a notification.

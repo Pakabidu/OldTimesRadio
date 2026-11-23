@@ -29,6 +29,7 @@ import android.widget.Toast
 class MainActivity : Activity() {
 
     private lateinit var radioSet: BroadcastSetView
+    private lateinit var grille: GrilleView
     private lateinit var nowPlaying: NowPlayingView
     private lateinit var tonePlate: TonePlateView
     private lateinit var moodLight: MoodLightView
@@ -158,9 +159,10 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(210))
         }
-        upper.addView(GrilleView(this).apply {
+        grille = GrilleView(this).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.6f)
-        })
+        }
+        upper.addView(grille)
         tonePlate = TonePlateView(this).apply {
             switches = listOf("SOUND" to Store.sound(this@MainActivity))
             onToggle = { _, on -> setSound(on) }
@@ -173,6 +175,12 @@ class MainActivity : Activity() {
         front.addView(upper)
         radioSet = BroadcastSetView(this).apply {
             onPress = { i -> pressStation(i) }
+            // The valves behind the grille and the magic eye follow the set.
+            onLight = { valves, level ->
+                // With the mood light on, the room's halos follow the lamps warming and dimming.
+                if (Mood.on && ::moodLight.isInitialized && kotlin.math.abs(valves - grille.glow) > 0.02f) moodLight.invalidate()
+                grille.glow = valves; grille.eye = level
+            }
             onLongPress = { i -> if (i < this@MainActivity.stations.size) stationMenu(i) else editStation(-1) }
             muted = !Store.sound(this@MainActivity)
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(250)).apply { topMargin = dp(12) }

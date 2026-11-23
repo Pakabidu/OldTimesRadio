@@ -175,29 +175,51 @@ class HandleView(ctx: Context) : CabinetView(ctx) {
     }
 }
 
-/** Plain black speaker grille: a fine basket weave in a bevelled recess. */
-class GrilleView(ctx: Context) : CabinetView(ctx) {
+/**
+ * Black speaker grille: a fine basket weave in a bevelled recess. Behind the cloth the
+ * valves glow warm orange while the set plays, and a green "magic eye" tuning indicator
+ * sits in a chrome escutcheon at the top, its shadow closing as the music swells.
+ */
+class GrilleView(ctx: Context) : CabinetView(ctx), MoodGlow {
+    /** How far the valves behind the cloth are lit (0 cold and dark, 1 full). */
+    var glow = 0f
+        set(v) { if (v != field) { field = v; invalidate() } }
+    /** The magic eye's reading (0 no signal, wide shadow; 1 loud, nearly closed). */
+    var eye = 0f
+        set(v) { if (v != field) { field = v; invalidate() } }
+
     private val recess = paint(Color.rgb(0x05, 0x05, 0x05))
     private val shade = paint()
     private val rim = paint(Color.BLACK) { style = Paint.Style.STROKE; strokeWidth = 2 * d }
     private val weave = paint()
-    private val outer = RectF(); private val inner = RectF()
+    private val valveGlow = paint()
+    private val ring = paint()
+    private val tube = paint(Color.rgb(0x04, 0x06, 0x04))
+    private val phosphor = paint()
+    private val shadow = paint(Color.rgb(0x05, 0x0A, 0x06))
+    private val cap = paint()
+    private val outer = RectF(); private val inner = RectF(); private val r = RectF()
+
+    private val eyeR get() = 10 * d
+    private val eyeX get() = inner.centerX()
+    private val eyeY get() = inner.top + eyeR * 1.5f + 6 * d
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         outer.set(0f, 0f, w.toFloat(), h.toFloat())
         inner.set(4 * d, 4 * d, w - 4 * d, h - 4 * d)
-        // One weave cell: two short bars, alternating light/dark, tiled.
+        // One weave cell: two short bars, alternating light/dark, tiled. The gaps between
+        // the threads are part see-through, so the valves' glow shows through the cloth.
         val s = (3 * d).toInt().coerceAtLeast(3)
         val cell = android.graphics.Bitmap.createBitmap(s * 2, s * 2, android.graphics.Bitmap.Config.ARGB_8888)
         val cc = Canvas(cell)
         val light = Paint().apply { color = Color.rgb(0x2A, 0x28, 0x26) }
         val dark = Paint().apply { color = Color.rgb(0x0E, 0x0D, 0x0C) }
-        cc.drawColor(Color.rgb(0x16, 0x15, 0x14))
+        cc.drawColor(Color.argb(0x90, 0x16, 0x15, 0x14))
         for (gy in 0..1) for (gx in 0..1) {
             val odd = (gx + gy) % 2 == 0
             val x = gx * s.toFloat(); val y = gy * s.toFloat()
-            cc.drawRect(x, y, x + s * 0.9f, y + s * 0.45f, if (odd) light else dark)
-            cc.drawRect(x, y + s * 0.5f, x + s * 0.9f, y + s * 0.95f, if (odd) dark else light)
+            cc.drawRect(x, y, x + s * 0.9f, y + s * 0.42f, if (odd) light else dark)
+            cc.drawRect(x, y + s * 0.5f, x + s * 0.9f, y + s * 0.92f, if (odd) dark else light)
         }
         weave.shader = BitmapShader(cell, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
         shade.shader = RadialGradient(w * 0.35f, h * 0.3f, w * 0.9f, Color.argb(0x0D, 255, 255, 255),
@@ -206,7 +228,17 @@ class GrilleView(ctx: Context) : CabinetView(ctx) {
 
     override fun onDraw(c: Canvas) {
         c.drawRoundRect(outer, 10 * d, 10 * d, recess)
+        // The valves behind the cloth: a warm pool, low in the cabinet.
+        val g = glow
+        if (g > 0.01f) {
+            valveGlow.shader = RadialGradient(inner.centerX(), inner.bottom - inner.height() * 0.32f, maxOf(inner.width(), inner.height()) * 0.62f,
+                intArrayOf(Color.argb((0xF0 * g).toInt(), 0xFF, 0xA8, 0x48), Color.argb((0x90 * g).toInt(), 0xE0, 0x6A, 0x1C),
+                    Color.argb(0, 0x80, 0x30, 0x08)), floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP)
+            c.drawRoundRect(inner, 8 * d, 8 * d, valveGlow)
+        }
         c.drawRoundRect(inner, 8 * d, 8 * d, weave)
+        // A little of the glow catches the threads themselves.
+        if (g > 0.01f) { valveGlow.alpha = (0x40 * g).toInt().coerceIn(0, 255); c.drawRoundRect(inner, 8 * d, 8 * d, valveGlow); valveGlow.alpha = 255 }
         c.drawRoundRect(inner, 8 * d, 8 * d, shade)
         // Years of dust settled into the cloth, and a paler patch where it's been brushed.
         c.save(); c.clipRect(inner)
@@ -214,6 +246,55 @@ class GrilleView(ctx: Context) : CabinetView(ctx) {
         Wear.scuffs(c, inner, 3, 3, d, alpha = 16, colour = Color.rgb(0xC8, 0xC0, 0xB0))
         c.restore()
         c.drawRoundRect(inner, 8 * d, 8 * d, rim)
+        magicEye(c)
+    }
+
+    /**
+     * The magic eye: a round green phosphor target seen end-on through a chrome escutcheon,
+     * with a dark shadow wedge at the top that narrows as the signal grows.
+     */
+    private fun magicEye(c: Canvas) {
+        val x = eyeX; val y = eyeY; val er = eyeR
+        // Chrome escutcheon, worn to brass in places, with a screw either side.
+        ring.shader = LinearGradient(x - er * 1.5f, y - er * 1.5f, x + er * 1.5f, y + er * 1.5f,
+            intArrayOf(Color.rgb(0xF0, 0xF0, 0xEC), Radio.CHROME_DARK, Color.rgb(0xDA, 0xDA, 0xD4), Color.rgb(0x50, 0x50, 0x4C)), null, Shader.TileMode.CLAMP)
+        r.set(x - er * 2.6f, y - er * 1.45f, x + er * 2.6f, y + er * 1.45f)
+        c.drawRoundRect(r, er * 1.45f, er * 1.45f, ring)
+        c.save(); c.clipRect(r); Wear.chips(c, r, 57, 5, d, Color.argb(160, 0xB8, 0x8A, 0x40)); Wear.scratches(c, r, 58, 4, d, alpha = 50); c.restore()
+        Hardware.screw(c, x - er * 2.0f, y, d, 1.7f)
+        Hardware.screw(c, x + er * 2.0f, y, d, 1.7f)
+        c.drawCircle(x, y, er * 1.08f, tube)
+        // Green phosphor, brightest at the rim, glowing with the valves.
+        val k = glow
+        val bright = Radio.mix(Color.rgb(0x10, 0x26, 0x16), EYE_GREEN, k)
+        val deep = Radio.mix(Color.rgb(0x06, 0x12, 0x0A), Color.rgb(0x1E, 0x8A, 0x44), k)
+        phosphor.shader = RadialGradient(x, y, er, intArrayOf(deep, deep, bright, Radio.mix(bright, Color.WHITE, 0.25f * k)),
+            floatArrayOf(0f, 0.4f, 0.85f, 1f), Shader.TileMode.CLAMP)
+        c.drawCircle(x, y, er, phosphor)
+        // The shadow wedge, opening upwards: wide with no signal, nearly shut when loud.
+        val sweep = 100f - 88f * eye.coerceIn(0f, 1f)
+        r.set(x - er * 1.02f, y - er * 1.02f, x + er * 1.02f, y + er * 1.02f)
+        c.drawArc(r, -90f - sweep / 2, sweep, true, shadow)
+        // The dark cap over the cathode, with a glint of glass.
+        cap.shader = RadialGradient(x - er * 0.1f, y - er * 0.12f, er * 0.4f, Color.rgb(0x2A, 0x2C, 0x2A), Color.rgb(0x04, 0x04, 0x04), Shader.TileMode.CLAMP)
+        c.drawCircle(x, y, er * 0.36f, cap)
+        Screen.glass(c, RectF(x - er, y - er, x + er, y + er), 59, d, dust = 6)
+    }
+
+    override fun glows(): List<Glow> {
+        if (inner.isEmpty) return emptyList()
+        val out = ArrayList<Glow>()
+        if (glow > 0.01f) {
+            val cy = inner.bottom - inner.height() * 0.32f
+            out += Glow(RectF(inner.left + inner.width() * 0.15f, cy - inner.height() * 0.3f, inner.right - inner.width() * 0.15f, cy + inner.height() * 0.25f),
+                Mood.AMBER, 0.55f * glow)
+        }
+        out += Glow(RectF(eyeX - eyeR, eyeY - eyeR, eyeX + eyeR, eyeY + eyeR), EYE_GREEN, 0.15f + 0.6f * glow)
+        return out
+    }
+
+    private companion object {
+        val EYE_GREEN = Color.rgb(0x7C, 0xF0, 0x8E)
     }
 }
 
