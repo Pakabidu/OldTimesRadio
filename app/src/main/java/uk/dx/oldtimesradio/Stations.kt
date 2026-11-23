@@ -1,4 +1,4 @@
-package uk.dx.wireless
+package uk.dx.oldtimesradio
 
 /** A station in the log: its name, what's engraved on its button, and where it streams from. */
 data class RadioStation(val name: String, val label: String, val url: String)

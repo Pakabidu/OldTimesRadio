@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "uk.dx.wireless"
+    namespace = "uk.dx.oldtimesradio"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "uk.dx.wireless"
+        applicationId = "uk.dx.oldtimesradio"
         minSdk = 26
         targetSdk = 34
         // CI passes -PbuildNumber=<run number>; the in-app update check compares against it.

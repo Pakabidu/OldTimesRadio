@@ -1,4 +1,4 @@
-package uk.dx.wireless
+package uk.dx.oldtimesradio
 
 import android.app.DownloadManager
 import android.content.Context
@@ -16,12 +16,12 @@ import java.net.URL
 /**
  * Checks the GitHub "latest" release for a newer build, downloads it and hands it to the
  * system installer. The CI workflow publishes version.txt (its build number, which is also
- * the APK's versionCode) next to Wireless.apk. Android never installs silently: the user
- * confirms the install, and the first time allows Wireless to install apps.
+ * the APK's versionCode) next to OldTimesRadio.apk. Android never installs silently: the user
+ * confirms the install, and the first time allows Old Times Radio to install apps.
  */
 object Updater {
-    private const val BASE = "https://github.com/Pakabidu/Wireless/releases/download/latest/"
-    const val APK_URL = BASE + "Wireless.apk"
+    private const val BASE = "https://github.com/Pakabidu/OldTimesRadio/releases/download/latest/"
+    const val APK_URL = BASE + "OldTimesRadio.apk"
     private const val VERSION_URL = BASE + "version.txt"
 
     data class Info(val current: Long, val latest: Long) {
@@ -42,7 +42,7 @@ object Updater {
         c.connectTimeout = 15_000
         c.readTimeout = 15_000
         c.instanceFollowRedirects = true
-        c.setRequestProperty("User-Agent", "Wireless update check")
+        c.setRequestProperty("User-Agent", "Old Times Radio update check")
         try {
             val code = c.responseCode
             if (code == 404) throw IOException("No published build found yet")
@@ -59,7 +59,7 @@ object Updater {
     // ---------------------------------------------------------------- download and install
 
     private fun dir(ctx: Context) = ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-    private fun apk(ctx: Context, build: Long) = File(dir(ctx), "Wireless-$build.apk")
+    private fun apk(ctx: Context, build: Long) = File(dir(ctx), "OldTimesRadio-$build.apk")
 
     /** The downloaded APK for [build], if it's complete and still there. */
     fun downloaded(ctx: Context, build: Long): File? {
@@ -94,20 +94,20 @@ object Updater {
         val dm = ctx.getSystemService(DownloadManager::class.java) ?: throw IOException("No download manager")
         apk(ctx, build).delete()
         val req = DownloadManager.Request(Uri.parse(APK_URL))
-            .setTitle("Wireless update (build $build)")
+            .setTitle("Old Times Radio update (build $build)")
             .setDescription("Downloading the new version")
             .setMimeType("application/vnd.android.package-archive")
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
-            .setDestinationInExternalFilesDir(ctx, Environment.DIRECTORY_DOWNLOADS, "Wireless-$build.apk")
+            .setDestinationInExternalFilesDir(ctx, Environment.DIRECTORY_DOWNLOADS, "OldTimesRadio-$build.apk")
         val id = dm.enqueue(req)
         Store.saveUpdateDownload(ctx, id, build)
         return id
     }
 
-    /** Can Wireless hand packages to the installer, or does the user need to allow it first? */
+    /** Can Old Times Radio hand packages to the installer, or does the user need to allow it first? */
     fun canInstall(ctx: Context) = ctx.packageManager.canRequestPackageInstalls()
 
-    /** The settings page where the user allows Wireless to install apps (needed once). */
+    /** The settings page where the user allows Old Times Radio to install apps (needed once). */
     fun allowInstallsIntent(ctx: Context) =
         Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${ctx.packageName}"))
 
@@ -122,7 +122,7 @@ object Updater {
     fun cleanUp(ctx: Context) {
         val current = currentBuild(ctx)
         dir(ctx)?.listFiles()?.forEach { f ->
-            val b = Regex("Wireless-(\\d+)\\.apk").matchEntire(f.name)?.groupValues?.get(1)?.toLongOrNull()
+            val b = Regex("OldTimesRadio-(\\d+)\\.apk").matchEntire(f.name)?.groupValues?.get(1)?.toLongOrNull()
             if (b != null && b <= current) f.delete()
         }
     }

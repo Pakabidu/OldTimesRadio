@@ -14,7 +14,7 @@
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
-        android:label="Wireless"
+        android:label="Old Times Radio"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="true">
         <!-- Cleartext: many internet radio streams are plain http (Shoutcast/Icecast). -->

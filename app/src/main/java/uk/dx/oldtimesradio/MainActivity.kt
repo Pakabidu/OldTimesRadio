@@ -1,4 +1,4 @@
-package uk.dx.wireless
+package uk.dx.oldtimesradio
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -100,7 +100,7 @@ class MainActivity : Activity() {
         lid.addView(TextView(this).apply {
             textSize = 13f; typeface = Radio.MONO; setTextColor(Radio.BRASS); gravity = Gravity.CENTER
             setPadding(0, dp(4), 0, 0)
-            text = "WIRELESS ${Updater.currentName(this@MainActivity)} · BUILD ${Updater.currentBuild(this@MainActivity)}"
+            text = "OLD TIMES RADIO ${Updater.currentName(this@MainActivity)} · BUILD ${Updater.currentBuild(this@MainActivity)}"
         })
 
         val scroll = ScrollView(this).apply {
@@ -404,7 +404,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         showState()
-        // Back from allowing Wireless to install apps: carry on with the install.
+        // Back from allowing Old Times Radio to install apps: carry on with the install.
         if (pendingInstall > 0 && Updater.canInstall(this)) {
             val build = pendingInstall
             pendingInstall = -1
@@ -458,7 +458,7 @@ class MainActivity : Activity() {
     private fun offerInstall(build: Long, file: java.io.File) {
         AlertDialog.Builder(this)
             .setTitle("Update ready")
-            .setMessage("Wireless build $build has downloaded (you have build ${Updater.currentBuild(this)}).\n\n" +
+            .setMessage("Old Times Radio build $build has downloaded (you have build ${Updater.currentBuild(this)}).\n\n" +
                 "Install it now? Your stations are kept.")
             .setPositiveButton("Install") { _, _ -> install(build, file) }
             .setNegativeButton("Later", null)
@@ -468,7 +468,7 @@ class MainActivity : Activity() {
     private fun install(build: Long, file: java.io.File) {
         if (!Updater.canInstall(this)) {
             pendingInstall = build
-            Toast.makeText(this, "Allow Wireless to install updates, then come back.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Allow Old Times Radio to install updates, then come back.", Toast.LENGTH_LONG).show()
             startActivity(Updater.allowInstallsIntent(this))
             return
         }

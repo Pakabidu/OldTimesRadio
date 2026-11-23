@@ -1,4 +1,4 @@
-package uk.dx.wireless
+package uk.dx.oldtimesradio
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -44,9 +44,9 @@ class StreamService : Service() {
     enum class State { OFF, TUNING, PLAYING, ERROR }
 
     companion object {
-        private const val ACTION_PLAY = "uk.dx.wireless.radio.PLAY"
-        private const val ACTION_STOP = "uk.dx.wireless.radio.STOP"
-        private const val ACTION_SOUND = "uk.dx.wireless.radio.SOUND"
+        private const val ACTION_PLAY = "uk.dx.oldtimesradio.radio.PLAY"
+        private const val ACTION_STOP = "uk.dx.oldtimesradio.radio.STOP"
+        private const val ACTION_SOUND = "uk.dx.oldtimesradio.radio.SOUND"
         private const val EXTRA_URL = "url"
         private const val EXTRA_NAME = "name"
         private const val CHANNEL = "radio"

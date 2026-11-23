@@ -1,4 +1,4 @@
-package uk.dx.wireless
+package uk.dx.oldtimesradio
 
 import android.content.Context
 import org.json.JSONArray
@@ -6,7 +6,7 @@ import org.json.JSONObject
 
 /** Settings and the station log, in shared preferences. */
 object Store {
-    private const val PREFS = "wireless"
+    private const val PREFS = "oldtimesradio"
     private fun p(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     fun stations(ctx: Context): List<RadioStation> {

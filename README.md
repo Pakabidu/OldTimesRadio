@@ -1,4 +1,4 @@
-# Wireless
+# Old Times Radio
 
 An internet radio player for Android, built as a 1940s portable wireless set in well-used
 condition: alligator leatherette case, leather handle, speaker grille, a lit amber meter that
