@@ -156,6 +156,7 @@ class StreamService : Service() {
                 if (left <= 0L) {
                     sleepAt = 0L
                     appCtx?.let { stop(it) }
+                    Caster.stop()   // or the speaker it's casting to
                     listeners.toList().forEach { it() }
                     return
                 }
@@ -288,7 +289,7 @@ class StreamService : Service() {
 
     private fun shutDown(keepError: Boolean = false) {
         player?.release(); player = null
-        clearSleep()
+        if (!Caster.connected) clearSleep()   // handed over to a cast speaker: keep counting
         if (!keepError) set(State.OFF, null)
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -297,7 +298,7 @@ class StreamService : Service() {
     override fun onDestroy() {
         if (current === this) current = null
         player?.release(); player = null
-        clearSleep()
+        if (!Caster.connected) clearSleep()   // handed over to a cast speaker: keep counting
         if (state != State.ERROR) set(State.OFF, null)
         super.onDestroy()
     }

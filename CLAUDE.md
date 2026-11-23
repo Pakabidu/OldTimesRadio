@@ -37,6 +37,10 @@ The whole app must feel like **warm, old radio equipment in used condition**: no
 - `BroadcastSetView`: the meter and the five preset buttons (the first five stations in
   the log). `GrilleView`: speaker, valve glow and magic eye. `TonePlateView`: SOUND,
   MOOD LIGHT and SLEEP. `NowPlayingView`: the lit title window.
+- `Caster`: Google Cast (Default Media Receiver; `CastSetup` is the options provider).
+  `MainActivity`'s `playState()`/`play()`/`stopPlaying()` send everything to the cast
+  speaker when one is connected, otherwise to `StreamService`. Device picking uses our own
+  dialog via `MediaRouter`, not `MediaRouteButton` (that needs an AppCompat theme).
 - `Store`: preferences, including the station log as JSON.
 - `Updater`: reads the `latest` GitHub release of `Pakabidu/OldTimesRadio`.
 

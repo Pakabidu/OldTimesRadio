@@ -44,5 +44,8 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.media3:media3-exoplayer:1.4.1")
+    // Google Cast: Chromecast, Google/Nest speakers and Cast TVs.
+    implementation("com.google.android.gms:play-services-cast-framework:21.4.0")
+    implementation("androidx.mediarouter:mediarouter:1.6.0")
     testImplementation("junit:junit:4.13.2")
 }

@@ -28,6 +28,11 @@
             </intent-filter>
         </activity>
 
+        <!-- Google Cast: which receiver to use, and the casting notification. -->
+        <meta-data
+            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="uk.dx.oldtimesradio.CastSetup" />
+
         <service
             android:name=".StreamService"
             android:exported="false"

@@ -12,6 +12,8 @@ PropWatch.
 - Long-press to change, move or remove a station; the first five in the log sit on the buttons.
 - Plays Shoutcast/Icecast MP3 and AAC streams in the background, with a notification.
 - SOUND rocker mutes; MOOD LIGHT darkens the room so the dials glow.
+- CAST rocker: plays on a Chromecast, Google/Nest speaker or Cast TV on the Wi-Fi (Google's
+  Default Media Receiver); the buttons, dial and sleep timer then work the speaker.
 - SLEEP knob: tap for 15, 30, 60 or 90 minutes (then off); the pointer winds back as time runs
   down, and the set fades out over the last half-minute and switches itself off.
 - Checks for a new build every time it opens (and on coming back to it, at most hourly).

@@ -20,6 +20,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.mediarouter.media.MediaRouter
 
 /**
  * Single screen, built in code so there's no layout XML to maintain: a 1940s portable
@@ -47,13 +48,24 @@ class MainActivity : Activity() {
         }
     }
 
-    /** Keeps the set in step with the stream service, and reports a failed tune-in. */
+    /** Keeps the set in step with the phone or the cast speaker, and reports a failed tune-in. */
     private val streamListener: () -> Unit = {
         showState()
-        if (StreamService.state == StreamService.State.ERROR) StreamService.error?.let {
+        if (playState() == StreamService.State.ERROR) playError()?.let {
+            Toast.makeText(this, it, Toast.LENGTH_LONG).show()
+        }
+        // A cast speaker that wouldn't connect.
+        if (!Caster.connected && Caster.state == StreamService.State.ERROR) Caster.error?.let {
             Toast.makeText(this, it, Toast.LENGTH_LONG).show()
         }
     }
+
+    // Whoever's playing: the cast speaker when one is connected, otherwise the phone.
+    private fun playState() = if (Caster.connected) Caster.state else StreamService.state
+    private fun playUrl() = if (Caster.connected) Caster.url else StreamService.url
+    private fun playError() = if (Caster.connected) Caster.error else StreamService.error
+    private fun play(st: RadioStation) { if (Caster.connected) Caster.play(st) else StreamService.play(this, st) }
+    private fun stopPlaying() { if (Caster.connected) Caster.stop() else StreamService.stop(this) }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -65,6 +77,7 @@ class MainActivity : Activity() {
             checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED
         ) requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 1)
         Sfx.init(this)
+        Caster.init(this)
         Mood.on = Store.moodLight(this)
         stations = Store.stations(this)
 
@@ -91,7 +104,8 @@ class MainActivity : Activity() {
             textSize = 15f; typeface = Typeface.SERIF; setTextColor(Radio.CREAM); alpha = 0.9f; setPadding(0, dp(2), 0, dp(8))
             text = "Tap a station to play it. The first five sit on the set's buttons. " +
                 "Long-press a station (or its button) to change, move or remove it. " +
-                "Tap the SLEEP knob to have the set fade out and switch itself off after 15, 30, 60 or 90 minutes."
+                "Tap the SLEEP knob to have the set fade out and switch itself off after 15, 30, 60 or 90 minutes. " +
+                "Flip CAST to play on a Chromecast, Google/Nest speaker or Cast TV on your Wi-Fi."
         })
         log = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         lid.addView(log)
@@ -130,6 +144,7 @@ class MainActivity : Activity() {
 
         refreshStations()
         StreamService.listen(streamListener)
+        Caster.listen(streamListener)
         volumeControlStream = android.media.AudioManager.STREAM_MUSIC   // volume keys turn the set up and down
 
         // Offer to install an update as soon as its download finishes.
@@ -157,15 +172,15 @@ class MainActivity : Activity() {
         }
         val upper = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(210))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(256))
         }
         grille = GrilleView(this).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.6f)
         }
         upper.addView(grille)
         tonePlate = TonePlateView(this).apply {
-            switches = listOf("SOUND" to Store.sound(this@MainActivity))
-            onToggle = { _, on -> setSound(on) }
+            switches = toneSwitches()
+            onToggle = { i, on -> if (i == 0) setSound(on) else castSwitch() }
             mood = Mood.on
             onMood = { on -> setMood(on) }
             onSleep = { turnSleepKnob() }
@@ -198,24 +213,33 @@ class MainActivity : Activity() {
 
     /** Where the stream that's playing sits in the log, or -1. */
     private fun playingIndex(): Int =
-        if (StreamService.state == StreamService.State.OFF) -1 else stations.indexOfFirst { it.url == StreamService.url }
+        if (playState() == StreamService.State.OFF) -1 else stations.indexOfFirst { it.url == playUrl() }
 
     private fun isOn(i: Int) = i >= 0 && playingIndex() == i &&
-        (StreamService.state == StreamService.State.PLAYING || StreamService.state == StreamService.State.TUNING)
+        (playState() == StreamService.State.PLAYING || playState() == StreamService.State.TUNING)
 
-    /** Follows the stream service on the set, the now-playing window and the log. */
+    /** Follows the phone or the cast speaker on the set, the now-playing window and the log. */
     private fun showState() {
         val i = playingIndex()
-        radioSet.show(StreamService.state, i)
+        val state = playState()
+        radioSet.show(state, i)
+        tonePlate.switches = toneSwitches()
         val st = stations.getOrNull(i)
-        nowPlaying.glow = when (StreamService.state) {
+        nowPlaying.glow = when (state) {
             StreamService.State.PLAYING -> 1f; StreamService.State.TUNING -> 0.6f; else -> 0.3f
         }
-        when (StreamService.state) {
-            StreamService.State.OFF -> { nowPlaying.heading = "THE SET IS OFF"; nowPlaying.text = "Press a station button" }
+        val speaker = Caster.device?.takeIf { Caster.connected }
+        when (state) {
+            StreamService.State.OFF -> {
+                nowPlaying.heading = if (speaker != null) "CASTING TO ${speaker.uppercase()}" else "THE SET IS OFF"
+                nowPlaying.text = "Press a station button"
+            }
             StreamService.State.TUNING -> { nowPlaying.heading = "TUNING IN"; nowPlaying.text = st?.name ?: "…" }
             StreamService.State.ERROR -> { nowPlaying.heading = "NO SIGNAL"; nowPlaying.text = st?.name ?: "Try another station" }
-            StreamService.State.PLAYING -> {
+            StreamService.State.PLAYING -> if (speaker != null) {
+                nowPlaying.heading = "ON ${speaker.uppercase()}"
+                nowPlaying.text = st?.name ?: ""
+            } else {
                 val title = StreamService.nowPlaying
                 nowPlaying.heading = if (title != null) (st?.name ?: "NOW PLAYING").uppercase() else "ON THE AIR"
                 nowPlaying.text = title ?: st?.name ?: ""
@@ -234,7 +258,7 @@ class MainActivity : Activity() {
 
     /** A tap on the SLEEP knob turns it on to the next mark (15, 30, 60, 90 minutes, then OFF). */
     private fun turnSleepKnob() {
-        val on = StreamService.state == StreamService.State.PLAYING || StreamService.state == StreamService.State.TUNING
+        val on = playState() == StreamService.State.PLAYING || playState() == StreamService.State.TUNING
         if (!on && StreamService.sleepAt == 0L) {
             Toast.makeText(this, "Switch a station on first, then set the sleep timer.", Toast.LENGTH_SHORT).show()
             return
@@ -250,12 +274,15 @@ class MainActivity : Activity() {
     private fun pressStation(i: Int) {
         Sfx.detent(this)
         if (i >= stations.size) { editStation(-1); return }
-        if (isOn(i)) StreamService.stop(this) else StreamService.play(this, stations[i])
+        if (isOn(i)) stopPlaying() else play(stations[i])
     }
+
+    private fun toneSwitches() = listOf("SOUND" to Store.sound(this), "CAST" to Caster.connected)
 
     private fun setSound(on: Boolean) {
         Store.saveSound(this, on)
         StreamService.soundChanged(this)
+        Caster.mute(!on)
         radioSet.muted = !on
         Sfx.click(this)
     }
@@ -272,6 +299,65 @@ class MainActivity : Activity() {
         Mood.invalidateAll(contentRoot)
         moodLight.set(on)
         Sfx.detent(this)
+    }
+
+    // ---- Casting ----
+
+    /**
+     * The CAST rocker: not casting, it opens the chooser of speakers and TVs on the Wi-Fi;
+     * casting, it offers to bring the sound back to the phone. The rocker itself only ever
+     * shows whether the set is casting.
+     */
+    private fun castSwitch() {
+        Sfx.click(this)
+        tonePlate.switches = toneSwitches()
+        when {
+            !Caster.available -> Toast.makeText(this, "Casting needs Google Play services on this phone.", Toast.LENGTH_LONG).show()
+            Caster.connected -> AlertDialog.Builder(this)
+                .setTitle("Casting to ${Caster.device ?: "a speaker"}")
+                .setMessage("Stop casting? The set goes quiet on the speaker; press a station to play it on the phone.")
+                .setPositiveButton("Stop casting") { _, _ -> Caster.disconnect() }
+                .setNegativeButton("Keep casting", null)
+                .show()
+            else -> chooseSpeaker()
+        }
+    }
+
+    /** Lists the Cast speakers and TVs on the Wi-Fi as they're found; picking one connects. */
+    private fun chooseSpeaker() {
+        val found = ArrayList<MediaRouter.RouteInfo>()
+        val names = android.widget.ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, ArrayList())
+        val status = TextView(this).apply { textSize = 15f; setPadding(dp(24), dp(4), dp(24), dp(8)) }
+        val list = android.widget.ListView(this).apply { adapter = names }
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(status); addView(list) }
+        fun refresh() {
+            found.clear(); found += Caster.devices()
+            names.clear(); names.addAll(found.map { it.name })
+            status.text = if (found.isEmpty()) "Looking for speakers and TVs on your Wi-Fi…\n\n" +
+                "Make sure the phone is on the same Wi-Fi as your Chromecast, Google/Nest speaker or Cast TV."
+                else "Choose where to play:"
+        }
+        val cb = object : MediaRouter.Callback() {
+            override fun onRouteAdded(r: MediaRouter, route: MediaRouter.RouteInfo) = refresh()
+            override fun onRouteRemoved(r: MediaRouter, route: MediaRouter.RouteInfo) = refresh()
+            override fun onRouteChanged(r: MediaRouter, route: MediaRouter.RouteInfo) = refresh()
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Cast to a speaker or TV")
+            .setView(box)
+            .setNegativeButton("Cancel", null)
+            .setOnDismissListener { Caster.stopLooking(cb) }
+            .create()
+        list.setOnItemClickListener { _, _, pos, _ ->
+            found.getOrNull(pos)?.let {
+                Caster.connect(it)
+                Toast.makeText(this, "Connecting to ${it.name}…", Toast.LENGTH_SHORT).show()
+            }
+            dialog.dismiss()
+        }
+        refresh()
+        Caster.startLooking(cb)
+        dialog.show()
     }
 
     // ---- The station log ----
@@ -365,7 +451,7 @@ class MainActivity : Activity() {
             .setTitle("Remove ${s.name}?")
             .setMessage("It comes off the station log" + if (i < Stations.PRESETS) " and its button." else ".")
             .setPositiveButton("Remove") { _, _ ->
-                if (isOn(i)) StreamService.stop(this)
+                if (isOn(i)) stopPlaying()
                 save(stations.filterIndexed { k, _ -> k != i })
             }
             .setNegativeButton("Cancel", null)
@@ -404,7 +490,7 @@ class MainActivity : Activity() {
                     return@setPositiveButton
                 }
                 save(if (i in stations.indices) stations.toMutableList().also { it[i] = st } else stations + st)
-                StreamService.play(this, st)
+                play(st)
             }
             .setNegativeButton("Cancel", null)
             .show()
@@ -459,6 +545,7 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         tonePlate.removeCallbacks(sleepClock)
         StreamService.unlisten(streamListener)
+        Caster.unlisten(streamListener)
         downloadReceiver?.let { runCatching { unregisterReceiver(it) } }
         super.onDestroy()
     }
