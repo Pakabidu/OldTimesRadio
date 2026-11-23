@@ -40,7 +40,9 @@ The whole app must feel like **warm, old radio equipment in used condition**: no
 - `BroadcastSetView`: the meter and the five preset buttons (the first five stations in
   the log). `GrilleView`: speaker, valve glow and magic eye. `TonePlateView`: SOUND,
   MOOD LIGHT and SLEEP. `NowPlayingView`: the lit title window.
-- `Caster`: Google Cast (Default Media Receiver; `CastSetup` is the options provider).
+- `Caster`: casting to Google Cast (Default Media Receiver; `CastSetup` is the options
+  provider) and DLNA renderers (`Upnp`: SSDP search, device description, AVTransport /
+  RenderingControl SOAP; pure java.net, tested against a fake renderer in `UpnpTest`).
   `MainActivity`'s `playState()`/`play()`/`stopPlaying()` send everything to the cast
   speaker when one is connected, otherwise to `StreamService`. Device picking uses our own
   dialog via `MediaRouter`, not `MediaRouteButton` (that needs an AppCompat theme).
@@ -53,7 +55,7 @@ The whole app must feel like **warm, old radio equipment in used condition**: no
   (`.github/workflows/build.yml`) runs unit tests and builds the APK on every push;
   watch it. Only builds from `main` are published as releases (with `version.txt`),
   which the in-app updater reads (it checks on every start, and at most hourly on return).
-- Pure-Kotlin modules (`Stations`, `Sleep`) have JVM tests in `app/src/test`. Run them
+- Pure-Kotlin modules (`Stations`, `Sleep`, `Tags`, `Upnp`) have JVM tests in `app/src/test`. Run them
   locally with a plain Kotlin/JVM Gradle project. Keep new rules pure so they're testable.
 - Preview custom-drawn UI with a browser canvas mock (same geometry) before pushing.
 - Watch for name clashes in the single `uk.dx.oldtimesradio` package (e.g. `Station`).

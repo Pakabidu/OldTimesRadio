@@ -1,6 +1,10 @@
 package uk.dx.oldtimesradio
 
 import android.content.Context
+import android.net.wifi.WifiManager
+import android.os.Handler
+import android.os.Looper
+import java.util.concurrent.Executors
 import androidx.mediarouter.media.MediaRouteSelector
 import androidx.mediarouter.media.MediaRouter
 import com.google.android.gms.cast.CastMediaControlIntent
@@ -19,10 +23,13 @@ import com.google.android.gms.cast.framework.media.NotificationOptions
 import com.google.android.gms.cast.framework.media.RemoteMediaClient
 
 /**
- * Casting: plays the set's stations on a Chromecast, Google/Nest speaker or Cast-enabled
- * TV, using Google's Default Media Receiver (no receiver app of our own). Finds devices on
- * the Wi-Fi, starts and ends the session, hands over a station that's playing on the
- * phone, and follows the device's own state for the dial. Main thread only.
+ * Casting: plays the set's stations on another speaker on the Wi-Fi, either
+ *  - Google Cast (Chromecast, Google/Nest speakers, Cast TVs), using Google's Default Media
+ *    Receiver (no receiver app of our own), or
+ *  - DLNA / UPnP media renderers (many smart TVs, Sonos, AV receivers, Kodi…) via [Upnp].
+ * Finds devices, connects and disconnects, hands over a station that's playing on the
+ * phone, and follows the device's own state for the dial. Main thread only (the DLNA
+ * network calls run on a worker thread and report back here).
  *
  * Its state mirrors [StreamService]'s so the set can show either; [MainActivity] picks
  * whichever is in charge ([connected] means the cast device is).
@@ -40,19 +47,34 @@ object Caster {
     private var session: CastSession? = null
     private var title = ""
 
+    /** A speaker to choose from: a Cast route or a DLNA renderer. */
+    class Speaker(val name: String, val kind: String, internal val route: MediaRouter.RouteInfo?, internal val renderer: Upnp.Renderer?)
+
+    // DLNA: the renderer in use, renderers found, and the worker that talks to them.
+    private var renderer: Upnp.Renderer? = null
+    private val found = LinkedHashMap<String, Upnp.Renderer>()
+    private val worker = Executors.newSingleThreadExecutor()
+    private val main = Handler(Looper.getMainLooper())
+    private var looking: (() -> Unit)? = null
+    private var routeCb: MediaRouter.Callback? = null
+    private var searchRound = 0
+    private var dlnaSince = 0L
+    private var dlnaMisses = 0
+
     private val listeners = mutableSetOf<() -> Unit>()
     fun listen(l: () -> Unit) { listeners += l }
     fun unlisten(l: () -> Unit) { listeners -= l }
     private fun changed() = listeners.toList().forEach { it() }
 
-    /** False where casting can't work (no Google Play services on the phone). */
-    val available get() = cast != null
-    val connected get() = session?.isConnected == true
-    /** The cast device's name, e.g. "Living Room speaker". */
-    val device: String? get() = session?.castDevice?.friendlyName
+    /** Google Cast needs Google Play services; DLNA works anywhere. */
+    val castAvailable get() = cast != null
+    private val castConnected get() = session?.isConnected == true
+    val connected get() = renderer != null || castConnected
+    /** The speaker's name, e.g. "Living Room speaker". */
+    val device: String? get() = renderer?.name ?: session?.castDevice?.friendlyName
 
     fun init(ctx: Context) {
-        if (cast != null) return
+        if (appCtx != null) return
         val app = ctx.applicationContext
         appCtx = app
         @Suppress("DEPRECATION")
@@ -66,33 +88,157 @@ object Caster {
         c.sessionManager.currentCastSession?.takeIf { it.isConnected }?.let { attach(it, handOver = false) }
     }
 
-    // ---- Finding and choosing a device ----
+    // ---- Finding and choosing a speaker ----
 
-    /** Cast devices found so far on the Wi-Fi. */
-    fun devices(): List<MediaRouter.RouteInfo> {
-        val r = router ?: return emptyList()
-        val sel = selector ?: return emptyList()
-        return r.routes.filter { !it.isDefault && it.isEnabled && it.matchesSelector(sel) }
+    /** Speakers found so far: Cast devices, then DLNA renderers. */
+    fun speakers(): List<Speaker> {
+        val out = ArrayList<Speaker>()
+        val r = router; val sel = selector
+        if (r != null && sel != null) for (route in r.routes)
+            if (!route.isDefault && route.isEnabled && route.matchesSelector(sel)) out += Speaker(route.name, "Google Cast", route, null)
+        for (d in found.values) out += Speaker(d.name, "DLNA", null, d)
+        return out
     }
 
-    /** Looks for devices while [cb] is registered (the chooser is open). */
-    fun startLooking(cb: MediaRouter.Callback) {
-        val sel = selector ?: return
-        router?.addCallback(sel, cb, MediaRouter.CALLBACK_FLAG_REQUEST_DISCOVERY or MediaRouter.CALLBACK_FLAG_PERFORM_ACTIVE_SCAN)
+    /** Looks for speakers while the chooser is open, calling [onChange] as they come and go. */
+    fun startLooking(onChange: () -> Unit) {
+        stopLooking()
+        looking = onChange
+        found.clear()   // only speakers that answer now, not ones switched off since
+        val sel = selector
+        val r = router
+        if (sel != null && r != null) {
+            val cb = object : MediaRouter.Callback() {
+                override fun onRouteAdded(router: MediaRouter, route: MediaRouter.RouteInfo) = onChange()
+                override fun onRouteRemoved(router: MediaRouter, route: MediaRouter.RouteInfo) = onChange()
+                override fun onRouteChanged(router: MediaRouter, route: MediaRouter.RouteInfo) = onChange()
+            }
+            routeCb = cb
+            r.addCallback(sel, cb, MediaRouter.CALLBACK_FLAG_REQUEST_DISCOVERY or MediaRouter.CALLBACK_FLAG_PERFORM_ACTIVE_SCAN)
+        }
+        searchDlna(++searchRound)
     }
 
-    fun stopLooking(cb: MediaRouter.Callback) { router?.removeCallback(cb) }
+    fun stopLooking() {
+        looking = null
+        searchRound++
+        routeCb?.let { router?.removeCallback(it) }
+        routeCb = null
+    }
 
-    /** Connects to [route]; the Cast framework then starts the session. */
-    fun connect(route: MediaRouter.RouteInfo) { router?.selectRoute(route) }
+    /**
+     * An SSDP search for DLNA renderers, repeated while the chooser stays open. Holds a
+     * Wi-Fi multicast lock while it listens, since some phones drop multicast otherwise.
+     */
+    private fun searchDlna(round: Int) {
+        val ctx = appCtx ?: return
+        Thread {
+            val wifi = ctx.getSystemService(WifiManager::class.java)
+            val lock = runCatching { wifi?.createMulticastLock("oldtimesradio-dlna")?.apply { setReferenceCounted(false); acquire() } }.getOrNull()
+            try {
+                val seen = HashSet<String>()
+                runCatching {
+                    Upnp.search { loc ->
+                        if (seen.add(loc)) worker.execute {
+                            val d = runCatching { Upnp.describe(loc) }.getOrNull() ?: return@execute
+                            main.post { if (found.put(loc, d) == null) looking?.invoke() }
+                        }
+                    }
+                }
+            } finally { runCatching { lock?.release() } }
+            main.postDelayed({ if (round == searchRound && looking != null) searchDlna(round) }, 6_000L)
+        }.start()
+    }
 
-    /** Ends casting and stops the device playing. */
-    fun disconnect() { cast?.sessionManager?.endCurrentSession(true) }
+    /** Connects to [s]: a Cast session starts, or the DLNA renderer takes over at once. */
+    fun connect(s: Speaker) {
+        s.route?.let { if (renderer != null) dropRenderer(); router?.selectRoute(it); return }
+        val d = s.renderer ?: return
+        if (castConnected) cast?.sessionManager?.endCurrentSession(true)
+        renderer = d
+        state = StreamService.State.OFF; url = null; error = null
+        dlnaMisses = 0
+        moveHere()
+        changed()
+        poll()
+    }
+
+    /** Ends casting and stops the speaker playing. */
+    fun disconnect() {
+        if (renderer != null) {
+            val d = renderer!!
+            worker.execute { runCatching { Upnp.stop(d) } }
+            dropRenderer()
+            return
+        }
+        cast?.sessionManager?.endCurrentSession(true)
+    }
+
+    private fun dropRenderer() {
+        renderer = null
+        state = StreamService.State.OFF; url = null
+        endSleepIfIdle()
+        changed()
+    }
+
+    /**
+     * Follows a DLNA renderer every few seconds: is it playing, still tuning, or stopped
+     * (from its own remote, say)? Gives up after several unanswered calls.
+     */
+    private fun poll() {
+        val d = renderer ?: return
+        worker.execute {
+            val st = runCatching { Upnp.state(d) }.getOrNull()
+            main.post {
+                if (renderer !== d) return@post
+                if (st == null) {
+                    if (++dlnaMisses >= 4) {
+                        error = "Lost touch with ${d.name}"
+                        state = StreamService.State.ERROR
+                        changed()
+                        dropRenderer()
+                        return@post
+                    }
+                } else {
+                    dlnaMisses = 0
+                    val before = state to url
+                    val tuning = System.currentTimeMillis() - dlnaSince < 15_000L
+                    when (st) {
+                        "PLAYING" -> if (url != null) state = StreamService.State.PLAYING
+                        "TRANSITIONING" -> if (url != null) state = StreamService.State.TUNING
+                        // Right after a station's sent, a renderer can say STOPPED for a moment.
+                        "STOPPED", "NO_MEDIA_PRESENT", "PAUSED_PLAYBACK" -> if (!tuning || state == StreamService.State.PLAYING) {
+                            if (state != StreamService.State.ERROR) { state = StreamService.State.OFF; url = null }
+                        }
+                    }
+                    if (state to url != before) changed()
+                }
+                main.postDelayed({ poll() }, 3_000L)
+            }
+        }
+    }
 
     // ---- Playing ----
 
-    /** Plays [s] on the cast device. */
+    /** Plays [s] on the speaker. */
     fun play(s: RadioStation) {
+        renderer?.let { d ->
+            url = s.url; title = s.name; state = StreamService.State.TUNING; error = null
+            dlnaSince = System.currentTimeMillis()
+            changed()
+            val mute = !(appCtx?.let { Store.sound(it) } ?: true)
+            worker.execute {
+                val e = runCatching { Upnp.play(d, s.name, s.url); if (mute) Upnp.mute(d, true) }.exceptionOrNull()
+                if (e != null) main.post {
+                    if (renderer === d && url == s.url) {
+                        state = StreamService.State.ERROR
+                        error = "${d.name} couldn't play ${s.name}" + (e.message?.let { " ($it)" } ?: "")
+                        changed()
+                    }
+                }
+            }
+            return
+        }
         val rmc = session?.remoteMediaClient ?: return
         url = s.url; title = s.name; state = StreamService.State.TUNING; error = null
         changed()
@@ -102,7 +248,7 @@ object Caster {
         }
         val info = MediaInfo.Builder(s.url)
             .setStreamType(MediaInfo.STREAM_TYPE_LIVE)
-            .setContentType(contentType(s.url))
+            .setContentType(Upnp.mime(s.url))
             .setMetadata(meta)
             .build()
         rmc.load(MediaLoadRequestData.Builder().setMediaInfo(info).setAutoplay(true).build())
@@ -118,23 +264,16 @@ object Caster {
 
     fun stop() {
         if (!connected) return
+        renderer?.let { d -> worker.execute { runCatching { Upnp.stop(d) } } }
         session?.remoteMediaClient?.stop()
         state = StreamService.State.OFF; url = null; error = null
         changed()
     }
 
     /** The SOUND rocker, on the cast device. */
-    fun mute(on: Boolean) { runCatching { session?.isMute = on } }
-
-    /** A best guess at the stream's audio type, for the receiver. */
-    private fun contentType(u: String): String {
-        val l = u.lowercase()
-        return when {
-            "aac" in l -> "audio/aac"
-            ".ogg" in l || "opus" in l -> "audio/ogg"
-            ".m3u8" in l -> "application/x-mpegURL"
-            else -> "audio/mpeg"
-        }
+    fun mute(on: Boolean) {
+        renderer?.let { d -> worker.execute { runCatching { Upnp.mute(d, on) } }; return }
+        runCatching { session?.isMute = on }
     }
 
     // ---- The session and the device's state ----
@@ -169,29 +308,37 @@ object Caster {
         session?.remoteMediaClient?.unregisterCallback(media)
         session = s
         s.remoteMediaClient?.registerCallback(media)
-        val ctx = appCtx
-        // A station playing on the phone moves over to the speaker.
-        val local = StreamService.url
-        if (handOver && ctx != null && local != null &&
-            (StreamService.state == StreamService.State.PLAYING || StreamService.state == StreamService.State.TUNING)) {
-            val st = Store.stations(ctx).firstOrNull { it.url == local } ?: RadioStation("Radio", "", local)
-            StreamService.stop(ctx)
-            play(st)
-        } else readStatus()
+        if (!(handOver && moveHere())) readStatus()
         changed()
+    }
+
+    /** A station playing on the phone moves over to the speaker. True if one did. */
+    private fun moveHere(): Boolean {
+        val ctx = appCtx ?: return false
+        val local = StreamService.url ?: return false
+        if (StreamService.state != StreamService.State.PLAYING && StreamService.state != StreamService.State.TUNING) return false
+        val st = Store.stations(ctx).firstOrNull { it.url == local } ?: RadioStation("Radio", "", local)
+        StreamService.stop(ctx)
+        play(st)
+        return true
     }
 
     private fun detach() {
         session?.remoteMediaClient?.unregisterCallback(media)
         session = null
+        if (renderer != null) return   // moved to a DLNA speaker
         state = StreamService.State.OFF; url = null
-        // The sleep timer was keeping time for the speaker; nothing's playing now.
-        appCtx?.let { if (StreamService.state == StreamService.State.OFF && StreamService.sleepAt != 0L) StreamService.setSleep(it, 0) }
+        endSleepIfIdle()
         changed()
     }
 
+    /** The sleep timer was keeping time for the speaker; with nothing playing, it goes off. */
+    private fun endSleepIfIdle() {
+        appCtx?.let { if (StreamService.state == StreamService.State.OFF && StreamService.sleepAt != 0L) StreamService.setSleep(it, 0) }
+    }
+
     private val sessions = object : SessionManagerListener<CastSession> {
-        override fun onSessionStarted(s: CastSession, id: String) = attach(s, handOver = true)
+        override fun onSessionStarted(s: CastSession, id: String) { if (renderer != null) dropRenderer(); attach(s, handOver = true) }
         override fun onSessionResumed(s: CastSession, wasSuspended: Boolean) = attach(s, handOver = false)
         override fun onSessionEnded(s: CastSession, error: Int) = detach()
         override fun onSessionStartFailed(s: CastSession, error: Int) {

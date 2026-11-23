@@ -20,7 +20,6 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import androidx.mediarouter.media.MediaRouter
 
 /**
  * Single screen, built in code so there's no layout XML to maintain: a 1940s portable
@@ -105,7 +104,7 @@ class MainActivity : Activity() {
             text = "Tap a station to play it. The first five sit on the set's buttons. " +
                 "Long-press a station (or its button) to change, move or remove it. " +
                 "Tap the SLEEP knob to have the set fade out and switch itself off after 15, 30, 60 or 90 minutes. " +
-                "Flip CAST to play on a Chromecast, Google/Nest speaker or Cast TV on your Wi-Fi."
+                "Flip CAST to play on a Chromecast, Google/Nest speaker, or a DLNA TV, Sonos or receiver on your Wi-Fi."
         })
         log = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         lid.addView(log)
@@ -311,42 +310,39 @@ class MainActivity : Activity() {
     private fun castSwitch() {
         Sfx.click(this)
         tonePlate.switches = toneSwitches()
-        when {
-            !Caster.available -> Toast.makeText(this, "Casting needs Google Play services on this phone.", Toast.LENGTH_LONG).show()
-            Caster.connected -> AlertDialog.Builder(this)
-                .setTitle("Casting to ${Caster.device ?: "a speaker"}")
-                .setMessage("Stop casting? The set goes quiet on the speaker; press a station to play it on the phone.")
-                .setPositiveButton("Stop casting") { _, _ -> Caster.disconnect() }
-                .setNegativeButton("Keep casting", null)
-                .show()
-            else -> chooseSpeaker()
-        }
+        if (Caster.connected) AlertDialog.Builder(this)
+            .setTitle("Casting to ${Caster.device ?: "a speaker"}")
+            .setMessage("Stop casting? The set goes quiet on the speaker; press a station to play it on the phone.")
+            .setPositiveButton("Stop casting") { _, _ -> Caster.disconnect() }
+            .setNegativeButton("Keep casting", null)
+            .show()
+        else chooseSpeaker()
     }
 
-    /** Lists the Cast speakers and TVs on the Wi-Fi as they're found; picking one connects. */
+    /**
+     * Lists the speakers and TVs on the Wi-Fi as they're found, Google Cast and DLNA
+     * alike; picking one connects.
+     */
     private fun chooseSpeaker() {
-        val found = ArrayList<MediaRouter.RouteInfo>()
+        val found = ArrayList<Caster.Speaker>()
         val names = android.widget.ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, ArrayList())
         val status = TextView(this).apply { textSize = 15f; setPadding(dp(24), dp(4), dp(24), dp(8)) }
         val list = android.widget.ListView(this).apply { adapter = names }
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(status); addView(list) }
         fun refresh() {
-            found.clear(); found += Caster.devices()
-            names.clear(); names.addAll(found.map { it.name })
+            found.clear(); found += Caster.speakers()
+            names.clear(); names.addAll(found.map { "${it.name}   ·   ${it.kind}" })
             status.text = if (found.isEmpty()) "Looking for speakers and TVs on your Wi-Fi…\n\n" +
-                "Make sure the phone is on the same Wi-Fi as your Chromecast, Google/Nest speaker or Cast TV."
+                "Make sure the phone is on the same Wi-Fi as your Chromecast, Google/Nest speaker, " +
+                "or DLNA TV, Sonos, receiver or other media renderer." +
+                (if (!Caster.castAvailable) "\n\n(Google Cast needs Google Play services; DLNA speakers will still show up.)" else "")
                 else "Choose where to play:"
-        }
-        val cb = object : MediaRouter.Callback() {
-            override fun onRouteAdded(r: MediaRouter, route: MediaRouter.RouteInfo) = refresh()
-            override fun onRouteRemoved(r: MediaRouter, route: MediaRouter.RouteInfo) = refresh()
-            override fun onRouteChanged(r: MediaRouter, route: MediaRouter.RouteInfo) = refresh()
         }
         val dialog = AlertDialog.Builder(this)
             .setTitle("Cast to a speaker or TV")
             .setView(box)
             .setNegativeButton("Cancel", null)
-            .setOnDismissListener { Caster.stopLooking(cb) }
+            .setOnDismissListener { Caster.stopLooking() }
             .create()
         list.setOnItemClickListener { _, _, pos, _ ->
             found.getOrNull(pos)?.let {
@@ -356,7 +352,7 @@ class MainActivity : Activity() {
             dialog.dismiss()
         }
         refresh()
-        Caster.startLooking(cb)
+        Caster.startLooking { refresh() }
         dialog.show()
     }
 

@@ -14,8 +14,9 @@ PropWatch.
 - SOUND rocker mutes; MOOD LIGHT darkens the room so the dials glow.
 - Bluetooth car stereos, headphones and the lock screen show the song, performer and station
   (from the stream's "Artist - Title"); the car's next/previous buttons change station.
-- CAST rocker: plays on a Chromecast, Google/Nest speaker or Cast TV on the Wi-Fi (Google's
-  Default Media Receiver); the buttons, dial and sleep timer then work the speaker.
+- CAST rocker: plays on a Chromecast, Google/Nest speaker or Cast TV (Google's Default Media
+  Receiver), or a DLNA/UPnP renderer (smart TVs, Sonos, AV receivers, Kodi…) on the Wi-Fi;
+  the buttons, dial and sleep timer then work the speaker.
 - SLEEP knob: tap for 15, 30, 60 or 90 minutes (then off); the pointer winds back as time runs
   down, and the set fades out over the last half-minute and switches itself off.
 - Checks for a new build every time it opens (and on coming back to it, at most hourly).
