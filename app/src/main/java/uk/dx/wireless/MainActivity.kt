@@ -1,0 +1,497 @@
+package uk.dx.wireless
+
+import android.app.Activity
+import android.app.AlertDialog
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.text.InputType
+import android.view.Gravity
+import android.view.View
+import android.widget.Button
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
+
+/**
+ * Single screen, built in code so there's no layout XML to maintain: a 1940s portable
+ * wireless set. Handle, speaker grille and tone plate, the broadcast set with its meter
+ * and station buttons, the now-playing window, and an open lid holding the station log.
+ */
+class MainActivity : Activity() {
+
+    private lateinit var radioSet: BroadcastSetView
+    private lateinit var nowPlaying: NowPlayingView
+    private lateinit var tonePlate: TonePlateView
+    private lateinit var moodLight: MoodLightView
+    private lateinit var contentRoot: View
+    private lateinit var log: LinearLayout
+    private lateinit var updateBtn: Button
+    private var stations: List<RadioStation> = emptyList()
+    private var downloadReceiver: android.content.BroadcastReceiver? = null
+    private var pendingInstall = -1L   // build waiting for the user to allow installs
+
+    /** Keeps the set in step with the stream service, and reports a failed tune-in. */
+    private val streamListener: () -> Unit = {
+        showState()
+        if (StreamService.state == StreamService.State.ERROR) StreamService.error?.let {
+            Toast.makeText(this, it, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        window.statusBarColor = Color.BLACK
+        window.navigationBarColor = Color.BLACK
+        if (Build.VERSION.SDK_INT >= 33 && savedInstanceState == null &&
+            checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED
+        ) requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 1)
+        Sfx.init(this)
+        Mood.on = Store.moodLight(this)
+        stations = Store.stations(this)
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(32))
+        }
+        buildFront(root)
+
+        // The open lid: the station log and the set's paperwork, on a black instruction panel.
+        val lid = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(26), dp(24), dp(26), dp(26))
+            background = Radio.LidDrawable(this@MainActivity)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(16) }
+        }
+        root.addView(lid)
+        lid.addView(LitNameplate(this, "Station Log").apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 0, 0, dp(8)) }
+        })
+        lid.addView(TextView(this).apply {
+            textSize = 15f; typeface = Typeface.SERIF; setTextColor(Radio.CREAM); alpha = 0.9f; setPadding(0, dp(2), 0, dp(8))
+            text = "Tap a station to play it. The first five sit on the set's buttons. " +
+                "Long-press a station (or its button) to change, move or remove it."
+        })
+        log = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        lid.addView(log)
+        lid.addView(radioButton("Add a station") { editStation(-1) })
+
+        lid.addView(section("The set"))
+        lid.addView(TextView(this).apply {
+            textSize = 15f; typeface = Typeface.SERIF; setTextColor(Radio.CREAM); alpha = 0.9f; setPadding(0, dp(2), 0, dp(6))
+            text = "Plays internet radio streams (Shoutcast, Icecast and similar, MP3 or AAC). It keeps playing " +
+                "with the screen off; stop it from the notification or by pressing the lit button again. " +
+                "The meter's needle swings with the station's loudness. SOUND off mutes the set without losing the station."
+        })
+        updateBtn = radioButton("Check for updates") { checkForUpdate() }
+        lid.addView(updateBtn)
+        lid.addView(TextView(this).apply {
+            textSize = 13f; typeface = Radio.MONO; setTextColor(Radio.BRASS); gravity = Gravity.CENTER
+            setPadding(0, dp(4), 0, 0)
+            text = "WIRELESS ${Updater.currentName(this@MainActivity)} · BUILD ${Updater.currentBuild(this@MainActivity)}"
+        })
+
+        val scroll = ScrollView(this).apply {
+            background = Radio.background(this@MainActivity)
+            isFillViewport = true
+            addView(root)
+        }
+        // The mood light sits over everything, fixed to the screen like the room's lighting.
+        moodLight = MoodLightView(this, scroll)
+        scroll.setOnScrollChangeListener { _, _, _, _, _ -> moodLight.invalidate() }
+        scroll.viewTreeObserver.addOnGlobalLayoutListener { moodLight.invalidate() }
+        setContentView(FrameLayout(this).apply {
+            addView(scroll)
+            addView(moodLight, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        })
+        contentRoot = root
+        if (Mood.on) Mood.styleText(root, resources.displayMetrics.density)
+
+        refreshStations()
+        StreamService.listen(streamListener)
+        volumeControlStream = android.media.AudioManager.STREAM_MUSIC   // volume keys turn the set up and down
+
+        if (savedInstanceState == null) autoUpdate()
+        // Offer to install an update as soon as its download finishes.
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(c: android.content.Context, i: Intent) {
+                val id = i.getLongExtra(android.app.DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+                if (id == Store.updateDownloadId(this@MainActivity)) onUpdateDownloaded()
+            }
+        }
+        downloadReceiver = receiver
+        androidx.core.content.ContextCompat.registerReceiver(this, receiver,
+            android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE),
+            androidx.core.content.ContextCompat.RECEIVER_EXPORTED)
+    }
+
+    /** The case front: handle, then grille and tone plate, the broadcast set, and the now-playing window. */
+    private fun buildFront(root: LinearLayout) {
+        root.addView(HandleView(this))
+        val front = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(14), dp(12), dp(14))
+            background = GradientDrawable().apply {
+                setColor(Color.argb(0x40, 0, 0, 0)); cornerRadius = dp(16).toFloat(); setStroke(dp(3), Color.rgb(0x05, 0x04, 0x04))
+            }
+        }
+        val upper = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(170))
+        }
+        upper.addView(GrilleView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.6f)
+        })
+        tonePlate = TonePlateView(this).apply {
+            switches = listOf("SOUND" to Store.sound(this@MainActivity))
+            onToggle = { _, on -> setSound(on) }
+            mood = Mood.on
+            onMood = { on -> setMood(on) }
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply { leftMargin = dp(10) }
+        }
+        upper.addView(tonePlate)
+        front.addView(upper)
+        radioSet = BroadcastSetView(this).apply {
+            onPress = { i -> pressStation(i) }
+            onLongPress = { i -> if (i < this@MainActivity.stations.size) stationMenu(i) else editStation(-1) }
+            muted = !Store.sound(this@MainActivity)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(250)).apply { topMargin = dp(12) }
+        }
+        front.addView(radioSet)
+        nowPlaying = NowPlayingView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) }
+        }
+        front.addView(nowPlaying)
+        root.addView(front)
+    }
+
+    // ---- Playing ----
+
+    /** Where the stream that's playing sits in the log, or -1. */
+    private fun playingIndex(): Int =
+        if (StreamService.state == StreamService.State.OFF) -1 else stations.indexOfFirst { it.url == StreamService.url }
+
+    private fun isOn(i: Int) = i >= 0 && playingIndex() == i &&
+        (StreamService.state == StreamService.State.PLAYING || StreamService.state == StreamService.State.TUNING)
+
+    /** Follows the stream service on the set, the now-playing window and the log. */
+    private fun showState() {
+        val i = playingIndex()
+        radioSet.show(StreamService.state, i)
+        val st = stations.getOrNull(i)
+        nowPlaying.glow = when (StreamService.state) {
+            StreamService.State.PLAYING -> 1f; StreamService.State.TUNING -> 0.6f; else -> 0.3f
+        }
+        when (StreamService.state) {
+            StreamService.State.OFF -> { nowPlaying.heading = "THE SET IS OFF"; nowPlaying.text = "Press a station button" }
+            StreamService.State.TUNING -> { nowPlaying.heading = "TUNING IN"; nowPlaying.text = st?.name ?: "…" }
+            StreamService.State.ERROR -> { nowPlaying.heading = "NO SIGNAL"; nowPlaying.text = st?.name ?: "Try another station" }
+            StreamService.State.PLAYING -> {
+                val title = StreamService.nowPlaying
+                nowPlaying.heading = if (title != null) (st?.name ?: "NOW PLAYING").uppercase() else "ON THE AIR"
+                nowPlaying.text = title ?: st?.name ?: ""
+            }
+        }
+        renderLog()
+    }
+
+    /** A station: play it, or switch off if it's the one playing. An empty button offers to add one. */
+    private fun pressStation(i: Int) {
+        Sfx.detent(this)
+        if (i >= stations.size) { editStation(-1); return }
+        if (isOn(i)) StreamService.stop(this) else StreamService.play(this, stations[i])
+    }
+
+    private fun setSound(on: Boolean) {
+        Store.saveSound(this, on)
+        StreamService.soundChanged(this)
+        radioSet.muted = !on
+        Sfx.click(this)
+    }
+
+    /**
+     * The mood light: the room goes dark around a table lamp and the dials, meters, lamps
+     * and button lettering glow warm orange. Fades in place; no rebuild.
+     */
+    private fun setMood(on: Boolean) {
+        Store.saveMoodLight(this, on)
+        Mood.on = on
+        tonePlate.mood = on
+        Mood.styleText(contentRoot, resources.displayMetrics.density)
+        Mood.invalidateAll(contentRoot)
+        moodLight.set(on)
+        Sfx.detent(this)
+    }
+
+    // ---- The station log ----
+
+    private fun refreshStations() {
+        radioSet.stations = stations
+        showState()
+    }
+
+    private fun save(list: List<RadioStation>) {
+        stations = list
+        Store.saveStations(this, list)
+        refreshStations()
+    }
+
+    /** Ruled cream-on-black table, like the station list printed in a set's lid. */
+    private fun renderLog() {
+        log.removeAllViews()
+        val rule = Color.argb(0xB0, 0xF0, 0xE4, 0xC4)
+        fun line() = View(this).apply {
+            setBackgroundColor(rule)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1))
+        }
+        fun row(a: String, b: String, header: Boolean, lit: Boolean = false) = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(if (header) 4 else 12), dp(10), dp(if (header) 4 else 12))
+            if (header) setBackgroundColor(Radio.CREAM)
+            addView(TextView(context).apply {
+                text = a; textSize = if (header) 13f else 17f
+                typeface = if (header) Radio.SERIF else Typeface.SERIF
+                letterSpacing = if (header) 0.3f else 0f
+                setTextColor(when { header -> Radio.INK; lit -> Mood.LAMP; else -> Radio.CREAM })
+                if (lit) setShadowLayer(8f * resources.displayMetrics.density, 0f, 0f, Mood.AMBER)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            addView(TextView(context).apply {
+                text = b; textSize = 13f; typeface = Radio.SERIF; letterSpacing = 0.1f; gravity = Gravity.END
+                setTextColor(if (header) Radio.INK else Radio.GOLD)
+                layoutParams = LinearLayout.LayoutParams(dp(78), LinearLayout.LayoutParams.WRAP_CONTENT)
+            })
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply { setColor(Color.TRANSPARENT); setStroke(dp(1), rule) }
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 0, 0, dp(6)) }
+        }
+        box.addView(row("STATION", "BUTTON", header = true))
+        val playing = playingIndex()
+        for ((i, s) in stations.withIndex()) {
+            box.addView(line())
+            val lit = i == playing
+            box.addView(row((if (lit) "▶  " else "▸  ") + s.name,
+                if (i < Stations.PRESETS) "№ ${i + 1}" else "", header = false, lit = lit).apply {
+                background = android.graphics.drawable.StateListDrawable().apply {
+                    addState(intArrayOf(android.R.attr.state_pressed), android.graphics.drawable.ColorDrawable(Color.argb(0x40, 0xF0, 0xE4, 0xC4)))
+                }
+                isClickable = true
+                setOnClickListener { pressStation(i) }
+                setOnLongClickListener { stationMenu(i); true }
+            })
+        }
+        if (stations.isEmpty()) {
+            box.addView(line())
+            box.addView(row("No stations yet — add one below", "", header = false))
+        }
+        log.addView(box)
+    }
+
+    /** Change, move or remove a station. */
+    private fun stationMenu(i: Int) {
+        val s = stations.getOrNull(i) ?: return
+        Sfx.click(this)
+        val items = buildList<Pair<String, () -> Unit>> {
+            add("Change…" to { editStation(i) })
+            if (i > 0) add("Move to the first button" to { save(Stations.toTop(stations, i)) })
+            if (i > 0) add("Move up one" to { save(Stations.up(stations, i)) })
+            add("Remove" to { confirmRemove(i) })
+        }
+        AlertDialog.Builder(this)
+            .setTitle(s.name)
+            .setItems(items.map { it.first }.toTypedArray()) { _, k -> items[k].second() }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun confirmRemove(i: Int) {
+        val s = stations.getOrNull(i) ?: return
+        AlertDialog.Builder(this)
+            .setTitle("Remove ${s.name}?")
+            .setMessage("It comes off the station log" + if (i < Stations.PRESETS) " and its button." else ".")
+            .setPositiveButton("Remove") { _, _ ->
+                if (isOn(i)) StreamService.stop(this)
+                save(stations.filterIndexed { k, _ -> k != i })
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** Asks for a station's name, button label and stream address; [i] -1 adds a new one. */
+    private fun editStation(i: Int, prefill: RadioStation? = null) {
+        val old = prefill ?: stations.getOrNull(i)
+        fun field(hint: String, value: String?, type: Int) = EditText(this).apply {
+            this.hint = hint; inputType = type; setText(value ?: ""); textSize = 18f
+        }
+        val nameField = field("Name, e.g. Radio Swiss Jazz", old?.name,
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS)
+        val labelField = field("Button label (optional, short)", old?.label,
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS)
+        val urlField = field("http://… stream address", old?.url,
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), 0)
+            addView(nameField); addView(labelField); addView(urlField)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(if (i < 0) "Add a station" else "Change station")
+            .setMessage("Enter the stream address of an internet radio station (Shoutcast, Icecast or similar).")
+            .setView(box)
+            .setPositiveButton("Save & play") { _, _ ->
+                val url = urlField.text.toString().trim()
+                val name = nameField.text.toString().trim().ifEmpty { "My station" }
+                val st = RadioStation(name, labelField.text.toString().trim().uppercase(), url)
+                if (!Stations.valid(url)) {
+                    Toast.makeText(this, "That doesn't look like a stream address (it should start http:// or https://).",
+                        Toast.LENGTH_LONG).show()
+                    editStation(i, st)
+                    return@setPositiveButton
+                }
+                save(if (i in stations.indices) stations.toMutableList().also { it[i] = st } else stations + st)
+                StreamService.play(this, st)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    // ---- Styled widgets ----
+
+    /** Bakelite push-button. */
+    private fun radioButton(t: String, onClick: () -> Unit) = Button(this).apply {
+        text = t
+        typeface = Radio.SERIF
+        letterSpacing = 0.12f
+        setTextColor(Radio.CREAM)
+        background = Radio.buttonBg(this@MainActivity)
+        stateListAnimator = null
+        textSize = 17f
+        minHeight = dp(60)
+        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, dp(6), 0, dp(6)) }
+        setOnClickListener { Sfx.click(this@MainActivity); onClick() }
+    }
+
+    private fun section(t: String) = TextView(this).apply {
+        textSize = 13.5f; letterSpacing = 0.22f; gravity = Gravity.CENTER
+        setPadding(dp(8), dp(3), dp(8), dp(3))
+        text = t.uppercase(); typeface = Radio.SERIF
+        setTextColor(Radio.INK)
+        background = GradientDrawable().apply { setColor(Radio.CREAM); cornerRadius = dp(1).toFloat() }
+        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, dp(20), 0, dp(8)) }
+    }
+
+    // ---- Lifecycle ----
+
+    override fun onResume() {
+        super.onResume()
+        showState()
+        // Back from allowing Wireless to install apps: carry on with the install.
+        if (pendingInstall > 0 && Updater.canInstall(this)) {
+            val build = pendingInstall
+            pendingInstall = -1
+            Updater.downloaded(this, build)?.let { startActivity(Updater.installIntent(this, it)) }
+        }
+    }
+
+    override fun onDestroy() {
+        StreamService.unlisten(streamListener)
+        downloadReceiver?.let { runCatching { unregisterReceiver(it) } }
+        super.onDestroy()
+    }
+
+    // ---- Updates: checked on every start, downloaded in the background, installed on request ----
+
+    /** Quietly checks for a newer build at startup and, if there is one, fetches it. */
+    private fun autoUpdate() {
+        Thread {
+            runCatching { Updater.cleanUp(this) }
+            val info = runCatching { Updater.check(this) }.getOrNull() ?: return@Thread
+            if (info.newer) runOnUiThread { if (!isFinishing) handleNewBuild(info, fromUser = false) }
+        }.start()
+    }
+
+    /** A newer build exists: offer it if it's downloaded, otherwise start downloading it. */
+    private fun handleNewBuild(info: Updater.Info, fromUser: Boolean) {
+        val file = Updater.downloaded(this, info.latest)
+        when {
+            file != null -> offerInstall(info.latest, file)
+            Updater.downloading(this, info.latest) -> if (fromUser)
+                Toast.makeText(this, "Already downloading build ${info.latest}…", Toast.LENGTH_SHORT).show()
+            else -> runCatching { Updater.download(this, info.latest) }
+                .onSuccess {
+                    Toast.makeText(this, "New version found (build ${info.latest}). Downloading…", Toast.LENGTH_LONG).show()
+                }
+                .onFailure {
+                    if (fromUser) startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Updater.APK_URL)))
+                }
+        }
+    }
+
+    private fun onUpdateDownloaded() {
+        if (isFinishing) return
+        val build = Store.updateBuild(this)
+        val file = Updater.downloaded(this, build)
+        if (file != null && build > Updater.currentBuild(this)) offerInstall(build, file)
+        else if (Updater.status(this) == android.app.DownloadManager.STATUS_FAILED)
+            Toast.makeText(this, "The update didn't download. Try Check for updates later.", Toast.LENGTH_LONG).show()
+    }
+
+    private fun offerInstall(build: Long, file: java.io.File) {
+        AlertDialog.Builder(this)
+            .setTitle("Update ready")
+            .setMessage("Wireless build $build has downloaded (you have build ${Updater.currentBuild(this)}).\n\n" +
+                "Install it now? Your stations are kept.")
+            .setPositiveButton("Install") { _, _ -> install(build, file) }
+            .setNegativeButton("Later", null)
+            .show()
+    }
+
+    private fun install(build: Long, file: java.io.File) {
+        if (!Updater.canInstall(this)) {
+            pendingInstall = build
+            Toast.makeText(this, "Allow Wireless to install updates, then come back.", Toast.LENGTH_LONG).show()
+            startActivity(Updater.allowInstallsIntent(this))
+            return
+        }
+        startActivity(Updater.installIntent(this, file))
+    }
+
+    private fun checkForUpdate() {
+        updateBtn.isEnabled = false
+        updateBtn.text = "Checking…"
+        Thread {
+            val res = runCatching { Updater.check(this) }
+            runOnUiThread {
+                updateBtn.isEnabled = true
+                updateBtn.text = "Check for updates"
+                if (isFinishing) return@runOnUiThread
+                res.onSuccess { info ->
+                    if (info.newer) handleNewBuild(info, fromUser = true)
+                    else Toast.makeText(this, "You're up to date (build ${info.current})", Toast.LENGTH_SHORT).show()
+                }.onFailure {
+                    Toast.makeText(this, "Couldn't check for updates: ${it.message ?: it.javaClass.simpleName}",
+                        Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
+    }
+}
