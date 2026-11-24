@@ -177,14 +177,14 @@ class HandleView(ctx: Context) : CabinetView(ctx) {
 
 /**
  * Black speaker grille: a fine basket weave in a bevelled recess. Behind the cloth the
- * valves glow warm orange while the set plays, and a green "magic eye" tuning indicator
- * sits in a chrome escutcheon at the top, its shadow closing as the music swells.
+ * valves glow warm orange while the set plays, and a green "magic eye" sits in a chrome
+ * escutcheon at the top, a full green disc pulsing with the music.
  */
 class GrilleView(ctx: Context) : CabinetView(ctx), MoodGlow {
     /** How far the valves behind the cloth are lit (0 cold and dark, 1 full). */
     var glow = 0f
         set(v) { if (v != field) { field = v; invalidate() } }
-    /** The magic eye's reading (0 no signal, wide shadow; 1 loud, nearly closed). */
+    /** The music's level for the magic eye (0 quiet, 1 loud): it pulses brighter as it rises. */
     var eye = 0f
         set(v) { if (v != field) { field = v; invalidate() } }
 
@@ -196,7 +196,6 @@ class GrilleView(ctx: Context) : CabinetView(ctx), MoodGlow {
     private val ring = paint()
     private val tube = paint(Color.rgb(0x04, 0x06, 0x04))
     private val phosphor = paint()
-    private val shadow = paint(Color.rgb(0x05, 0x0A, 0x06))
     private val cap = paint()
     private val outer = RectF(); private val inner = RectF(); private val r = RectF()
 
@@ -250,8 +249,8 @@ class GrilleView(ctx: Context) : CabinetView(ctx), MoodGlow {
     }
 
     /**
-     * The magic eye: a round green phosphor target seen end-on through a chrome escutcheon,
-     * with a dark shadow wedge at the top that narrows as the signal grows.
+     * The magic eye: a round green phosphor disc seen end-on through a chrome escutcheon,
+     * pulsing in brightness with the music.
      */
     private fun magicEye(c: Canvas) {
         val x = eyeX; val y = eyeY; val er = eyeR
@@ -264,20 +263,20 @@ class GrilleView(ctx: Context) : CabinetView(ctx), MoodGlow {
         Hardware.screw(c, x - er * 2.0f, y, d, 1.7f)
         Hardware.screw(c, x + er * 2.0f, y, d, 1.7f)
         c.drawCircle(x, y, er * 1.08f, tube)
-        // Green phosphor, brightest at the rim, glowing with the valves.
-        val k = glow
-        val bright = Radio.mix(Color.rgb(0x10, 0x26, 0x16), EYE_GREEN, k)
-        val deep = Radio.mix(Color.rgb(0x06, 0x12, 0x0A), Color.rgb(0x1E, 0x8A, 0x44), k)
-        phosphor.shader = RadialGradient(x, y, er, intArrayOf(deep, deep, bright, Radio.mix(bright, Color.WHITE, 0.25f * k)),
-            floatArrayOf(0f, 0.4f, 0.85f, 1f), Shader.TileMode.CLAMP)
+        // A full green phosphor disc that pulses with the music: brighter on loud passages,
+        // softer on quiet ones, dark when the set is off.
+        val k = pulse()
+        val bright = Radio.mix(Color.rgb(0x0C, 0x1E, 0x10), EYE_GREEN, k)
+        val deep = Radio.mix(Color.rgb(0x05, 0x10, 0x08), Color.rgb(0x1E, 0x9A, 0x4A), k)
+        phosphor.shader = RadialGradient(x, y, er, intArrayOf(Radio.mix(bright, Color.WHITE, 0.35f * k), bright, deep),
+            floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP)
         c.drawCircle(x, y, er, phosphor)
-        // The shadow wedge, opening upwards: wide with no signal, nearly shut when loud.
-        val sweep = 100f - 88f * eye.coerceIn(0f, 1f)
-        r.set(x - er * 1.02f, y - er * 1.02f, x + er * 1.02f, y + er * 1.02f)
-        c.drawArc(r, -90f - sweep / 2, sweep, true, shadow)
-        // The dark cap over the cathode, with a glint of glass.
-        cap.shader = RadialGradient(x - er * 0.1f, y - er * 0.12f, er * 0.4f, Color.rgb(0x2A, 0x2C, 0x2A), Color.rgb(0x04, 0x04, 0x04), Shader.TileMode.CLAMP)
-        c.drawCircle(x, y, er * 0.36f, cap)
+        // Its light spilling onto the tube's glass round the disc.
+        if (k > 0.02f) {
+            cap.shader = RadialGradient(x, y, er * 1.08f, intArrayOf(Color.argb(0, 0x7C, 0xF0, 0x8E), Color.argb(0, 0x7C, 0xF0, 0x8E),
+                Color.argb((0x90 * k).toInt(), 0x7C, 0xF0, 0x8E)), floatArrayOf(0f, 0.85f, 1f), Shader.TileMode.CLAMP)
+            c.drawCircle(x, y, er * 1.08f, cap)
+        }
         Screen.glass(c, RectF(x - er, y - er, x + er, y + er), 59, d, dust = 6)
     }
 
@@ -289,9 +288,12 @@ class GrilleView(ctx: Context) : CabinetView(ctx), MoodGlow {
             out += Glow(RectF(inner.left + inner.width() * 0.15f, cy - inner.height() * 0.3f, inner.right - inner.width() * 0.15f, cy + inner.height() * 0.25f),
                 Mood.AMBER, 0.55f * glow)
         }
-        out += Glow(RectF(eyeX - eyeR, eyeY - eyeR, eyeX + eyeR, eyeY + eyeR), EYE_GREEN, 0.15f + 0.6f * glow)
+        out += Glow(RectF(eyeX - eyeR, eyeY - eyeR, eyeX + eyeR, eyeY + eyeR), EYE_GREEN, 0.15f + 0.7f * pulse())
         return out
     }
+
+    /** How bright the eye is: lit with the valves, pulsing with the meter's reading. */
+    private fun pulse() = glow * (0.4f + 0.6f * eye.coerceIn(0f, 1f))
 
     private companion object {
         val EYE_GREEN = Color.rgb(0x7C, 0xF0, 0x8E)

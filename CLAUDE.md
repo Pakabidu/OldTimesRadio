@@ -39,7 +39,8 @@ The whole app must feel like **warm, old radio equipment in used condition**: no
   UI listens via `StreamService.listen`. It finds the playing station by URL, so the log
   can be reordered.
 - `BroadcastSetView`: the meter and the five preset buttons (the first five stations in
-  the log). `GrilleView`: speaker, valve glow and magic eye. `TonePlateView`: CLOSE
+  the log). `GrilleView`: speaker, valve glow and magic eye (a full green disc
+  pulsing with the music level). `TonePlateView`: CLOSE
   (stops everything and kills the app), CAST, MOOD LIGHT and SLEEP. (SOUND/mute was
   removed; the mute plumbing is dormant and `Store.sound` is forced on.) `NowPlayingView`: the lit title window.
 - `Caster`: casting to Google Cast (Default Media Receiver; `CastSetup` is the options

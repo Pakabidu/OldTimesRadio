@@ -150,6 +150,7 @@ object Wear {
  */
 class WornDrawable(base: Drawable, private val seed: Int, private val d: Float, private val button: Boolean) : DrawableWrapper(base) {
     private val shine = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val lamp = Paint(Paint.ANTI_ALIAS_FLAG)
     private val r = RectF()
 
     override fun draw(c: Canvas) {
@@ -157,6 +158,16 @@ class WornDrawable(base: Drawable, private val seed: Int, private val d: Float, 
         r.set(bounds)
         if (r.isEmpty) return
         c.save(); c.clipRect(r)
+        if (button && Mood.on) {
+            // Under the mood light the button is lit from behind: a warm amber glow through
+            // the bakelite, brightest in the middle like a lamp behind the lettering.
+            lamp.shader = RadialGradient(r.centerX(), r.centerY(), maxOf(r.width(), r.height()) * 0.6f,
+                intArrayOf(Color.argb(0xB0, 0xC0, 0x78, 0x2C), Color.argb(0x60, 0x8A, 0x4A, 0x16), Color.argb(0x18, 0x50, 0x28, 0x0A)),
+                floatArrayOf(0f, 0.6f, 1f), Shader.TileMode.CLAMP)
+            c.save(); c.scale(1f, (r.height() / r.width()).coerceIn(0.2f, 1f) * 2.2f, r.centerX(), r.centerY())
+            c.drawCircle(r.centerX(), r.centerY(), maxOf(r.width(), r.height()) * 0.6f, lamp)
+            c.restore()
+        }
         if (button) {
             // Polished where thumbs have pressed it for years.
             shine.shader = RadialGradient(r.centerX(), r.centerY(), r.height() * 0.9f,
@@ -300,7 +311,8 @@ class MoodLightView(ctx: Context, private val content: View) : View(ctx) {
             val ox = (there[0] - here[0]).toFloat(); val oy = (there[1] - here[1]).toFloat()
             if (oy < h && oy + v.height > 0) {
                 val glows = if (v is MoodGlow) v.glows()
-                    else listOf(Glow(RectF(0f, 0f, v.width.toFloat(), v.height.toFloat()), Mood.AMBER, 0.45f))
+                    // Bakelite buttons are lit from behind under the mood light (see WornDrawable).
+                    else listOf(Glow(RectF(0f, 0f, v.width.toFloat(), v.height.toFloat()), Mood.AMBER, 0.5f, screen = true, radius = 4 * d))
                 for (g in glows) lit += Lit(RectF(g.rect).apply { offset(ox, oy) }, g)
             }
         }
