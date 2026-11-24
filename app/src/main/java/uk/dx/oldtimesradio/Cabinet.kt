@@ -320,6 +320,9 @@ class TonePlateView(ctx: Context) : CabinetView(ctx), MoodGlow {
 
     private val label = paint(Radio.INK) { typeface = Radio.SERIF; textSize = 9f * t; letterSpacing = 0.12f; textAlign = Paint.Align.CENTER }
     private val tiny = paint(Color.rgb(0x2A, 0x28, 0x24)) { typeface = Radio.SERIF; textSize = 5f * t; textAlign = Paint.Align.CENTER }
+    /** The knobs' engraved marks (MOOD LIGHT's OFF/ON, the SLEEP minutes): big enough to read at arm's length. */
+    private val marks = paint(Color.rgb(0x22, 0x20, 0x1C)) { typeface = Radio.SERIF; textSize = 7.5f * t; textAlign = Paint.Align.CENTER }
+    private val markH get() = marks.textSize
     private val bezel = paint()
     private val slotPaint = paint(Color.rgb(0x0E, 0x0C, 0x0A))
     private val rocker = paint()
@@ -336,8 +339,10 @@ class TonePlateView(ctx: Context) : CabinetView(ctx), MoodGlow {
     private val moodY get() = rowTop(switches.size) + 8 * d + 5 * t + 17 * d
     private val moodR get() = 15 * d
     /** The sleep knob sits under the mood knob, clear of its OFF/ON marks and with its own scale round it. */
-    private val sleepY get() = moodY + moodR + 6 * d + 5 * t + moodR * 1.2f + 12 * d + 5 * t
-    private val sleepMarkR get() = moodR * 1.2f + 4 * d + 2.5f * t
+    /** Baseline of MOOD LIGHT's OFF and ON, below the knob either side. */
+    private val moodMarkY get() = moodY + moodR + 3 * d + markH * 0.8f
+    private val sleepMarkR get() = moodR * 1.2f + 4 * d + markH * 0.55f
+    private val sleepY get() = moodMarkY + 5 * d + sleepMarkR + markH
 
     override fun onDraw(c: Canvas) {
         val w = width.toFloat(); val h = height.toFloat()
@@ -358,9 +363,9 @@ class TonePlateView(ctx: Context) : CabinetView(ctx), MoodGlow {
         for ((k, m) in SLEEP_MARKS.withIndex()) {
             val a = Math.toRadians(SLEEP_ANGLES[k].toDouble())
             val mx = x + sleepMarkR * kotlin.math.cos(a).toFloat(); val my = y + sleepMarkR * kotlin.math.sin(a).toFloat()
-            c.drawText(if (m == 0) "OFF" else "$m", mx, my + tiny.textSize * 0.36f, tiny)
+            c.drawText(if (m == 0) "OFF" else "$m", mx, my + markH * 0.36f, marks)
         }
-        fitText(c, "SLEEP", x, y + moodR * 1.2f + 4 * d + 7 * t, label.apply { textSize = 7f * t }, width - 8 * d)
+        fitText(c, "SLEEP", x, y + sleepMarkR * 0.64f + markH * 0.5f + 4 * d + 7 * t, label.apply { textSize = 7f * t }, width - 8 * d)
         label.textSize = 9f * t
         socket.shader = LinearGradient(x - moodR * 1.25f, y - moodR * 1.25f, x + moodR * 1.25f, y + moodR * 1.25f,
             Color.rgb(0xE0, 0xDE, 0xD6), Color.rgb(0x6A, 0x68, 0x62), Shader.TileMode.CLAMP)
@@ -450,8 +455,8 @@ class TonePlateView(ctx: Context) : CabinetView(ctx), MoodGlow {
         fitText(c, "MOOD LIGHT", x, top + 4 * t, label.apply { textSize = 7f * t }, width - 8 * d)
         label.textSize = 9f * t
         tiny.color = Color.rgb(0x2A, 0x28, 0x24)
-        c.drawText("OFF", x - moodR - 5 * d, y + moodR + 6 * d, tiny)
-        c.drawText("ON", x + moodR + 5 * d, y + moodR + 6 * d, tiny)
+        c.drawText("OFF", x - moodR - 9 * d, moodMarkY, marks)
+        c.drawText("ON", x + moodR + 9 * d, moodMarkY, marks)
         socket.shader = LinearGradient(x - moodR * 1.25f, y - moodR * 1.25f, x + moodR * 1.25f, y + moodR * 1.25f,
             Color.rgb(0xE0, 0xDE, 0xD6), Color.rgb(0x6A, 0x68, 0x62), Shader.TileMode.CLAMP)
         c.drawCircle(x, y, moodR * 1.2f, socket)
