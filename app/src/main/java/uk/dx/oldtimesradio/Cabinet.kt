@@ -328,7 +328,6 @@ class TonePlateView(ctx: Context) : CabinetView(ctx), MoodGlow {
     private val rocker = paint()
     private val thumb = paint()
     private val jewel = paint()
-    private val jewelRim = paint(Color.rgb(0x5A, 0x58, 0x52)) { style = Paint.Style.STROKE; strokeWidth = 1.2f * d }
     private val knob = paint()
     private val ridge = paint(Color.argb(0xAA, 0, 0, 0)) { strokeWidth = 1f * d }
     private val socket = paint()
@@ -402,6 +401,8 @@ class TonePlateView(ctx: Context) : CabinetView(ctx), MoodGlow {
     }
 
     private companion object {
+        /** A rocker's lamp when lit: bright warm amber. */
+        val LAMP_LIT = Color.rgb(0xFF, 0xB8, 0x48)
         /** Engraved marks (minutes) and their angles, clockwise from lower left round the top to lower right. */
         val SLEEP_MARKS = Sleep.MARKS
         val SLEEP_ANGLES = listOf(140f, 205f, 270f, 335f, 400f)
@@ -413,12 +414,15 @@ class TonePlateView(ctx: Context) : CabinetView(ctx), MoodGlow {
         val base = top + 9 * t
         fitText(c, name, cx, base, label, w - 10 * d)
         Wear.rub(c, RectF(cx - w * 0.3f, base - 9 * t, cx + w * 0.3f, base), 40 + i, d, Color.rgb(0xC8, 0xC5, 0xBA), 2)
-        // Jewel lamp, lit when the switch is on.
+        // Faceted jewel lamp in a chrome ring: lit bright amber with a warm halo when the
+        // switch is on (the same for every rocker), dull brown glass when it's off.
         val jy = base + 7 * d
-        jewel.shader = RadialGradient(cx - 0.8f * d, jy - 0.8f * d, 4 * d,
-            if (on) intArrayOf(Color.WHITE, Mood.LAMP, Color.rgb(0xB0, 0x50, 0x10)) else intArrayOf(Color.rgb(0x70, 0x50, 0x38), Color.rgb(0x40, 0x28, 0x18), Color.rgb(0x20, 0x14, 0x0C)),
-            null, Shader.TileMode.CLAMP)
-        c.drawCircle(cx, jy, 3.2f * d, jewel); c.drawCircle(cx, jy, 3.2f * d, jewelRim)
+        if (on) {
+            jewel.shader = RadialGradient(cx, jy, 10 * d, intArrayOf(Color.argb(0xA0, 0xFF, 0xB0, 0x50),
+                Color.argb(0x40, 0xFF, 0x9A, 0x3C), Color.argb(0, 0xFF, 0x9A, 0x3C)), floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP)
+            c.drawCircle(cx, jy, 10 * d, jewel)
+        }
+        Hardware.jewel(c, cx, jy, 3.4f * d, if (on) LAMP_LIT else Color.rgb(0x5A, 0x3A, 0x22), d)
         // Chrome escutcheon with two screws.
         val ey = jy + 6 * d
         r.set(cx - 24 * d, ey, cx + 24 * d, ey + 20 * d)
@@ -484,7 +488,7 @@ class TonePlateView(ctx: Context) : CabinetView(ctx), MoodGlow {
         val w = width.toFloat()
         for ((i, s) in switches.withIndex()) if (s.second) {
             val jy = rowTop(i) + 9 * t + 7 * d
-            out += Glow(RectF(w / 2 - 6 * d, jy - 6 * d, w / 2 + 6 * d, jy + 6 * d), Mood.LAMP, 0.9f)
+            out += Glow(RectF(w / 2 - 7 * d, jy - 7 * d, w / 2 + 7 * d, jy + 7 * d), Mood.LAMP, 1f)
         }
         if (mood) out += Glow(RectF(w / 2 - 8 * d, moodY - 8 * d, w / 2 + 8 * d, moodY + 8 * d), Mood.LAMP, 1f)
         if (sleepMinutes > 0f) out += Glow(RectF(w / 2 - 8 * d, sleepY - 8 * d, w / 2 + 8 * d, sleepY + 8 * d), Mood.LAMP, 0.8f)
