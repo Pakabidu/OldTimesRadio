@@ -38,7 +38,6 @@ class MainActivity : Activity() {
     private lateinit var favBox: LinearLayout
     /** The song on now (from the station's titles), for the heart button; null if none. */
     private var song: FavouriteSong? = null
-    private var exporting: AlertDialog? = null
     private lateinit var updateBtn: Button
     private var stations: List<RadioStation> = emptyList()
     private var downloadReceiver: android.content.BroadcastReceiver? = null
@@ -114,7 +113,7 @@ class MainActivity : Activity() {
         lid.addView(log)
         lid.addView(radioButton("Add a station") { editStation(-1) })
 
-        // Favourite songs: saved with the heart, taken to Spotify or YouTube.
+        // Favourite songs: saved with the heart, found again on YouTube or Spotify.
         lid.addView(LitNameplate(this, "Favourite Songs").apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, dp(22), 0, dp(8)) }
@@ -126,11 +125,6 @@ class MainActivity : Activity() {
         })
         favBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         lid.addView(favBox)
-        lid.addView(radioButton("Export to Spotify") { exportSpotify() }.apply {
-            setOnLongClickListener { askSpotifyClientId(); true }
-        })
-        lid.addView(radioButton("Export to YouTube") { exportYouTube() })
-        lid.addView(radioButton("Share the list") { shareFavourites() })
         renderFavourites()
 
         lid.addView(section("The set"))
@@ -165,7 +159,6 @@ class MainActivity : Activity() {
         if (Mood.on) Mood.styleText(root, resources.displayMetrics.density)
 
         refreshStations()
-        handleCallback(intent)
         StreamService.listen(streamListener)
         Caster.listen(streamListener)
         volumeControlStream = android.media.AudioManager.STREAM_MUSIC   // volume keys turn the set up and down
@@ -325,6 +318,7 @@ class MainActivity : Activity() {
         Mood.on = on
         tonePlate.mood = on
         Mood.styleText(contentRoot, resources.displayMetrics.density)
+        renderLog(); renderFavourites()   // the lists in the lid light up (or go dark)
         Mood.invalidateAll(contentRoot)
         moodLight.set(on)
         Sfx.detent(this)
@@ -426,8 +420,7 @@ class MainActivity : Activity() {
                 layoutParams = LinearLayout.LayoutParams(dp(78), LinearLayout.LayoutParams.WRAP_CONTENT)
             })
         }
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        val box = LitPanel(this).apply {
             background = GradientDrawable().apply { setColor(Color.TRANSPARENT); setStroke(dp(1), rule) }
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 0, 0, dp(6)) }
@@ -451,6 +444,7 @@ class MainActivity : Activity() {
             box.addView(line())
             box.addView(row("No stations yet — add one below", "", header = false))
         }
+        box.applyMood()
         log.addView(box)
     }
 
@@ -572,8 +566,7 @@ class MainActivity : Activity() {
         favBox.removeAllViews()
         val favs = Store.favourites(this)
         val rule = Color.argb(0xB0, 0xF0, 0xE4, 0xC4)
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        val box = LitPanel(this).apply {
             background = GradientDrawable().apply { setColor(Color.TRANSPARENT); setStroke(dp(1), rule) }
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 0, 0, dp(6)) }
@@ -611,6 +604,7 @@ class MainActivity : Activity() {
                 setOnClickListener { favouriteMenu(f) }
             })
         }
+        box.applyMood()
         favBox.addView(box)
     }
 
@@ -636,218 +630,8 @@ class MainActivity : Activity() {
             .onFailure { Toast.makeText(this, "Nothing on this phone can open that link.", Toast.LENGTH_SHORT).show() }
     }
 
-    /** The list as text, to any app: notes, email, or a playlist-transfer service. */
-    private fun shareFavourites() {
-        val favs = Store.favourites(this)
-        if (favs.isEmpty()) { Toast.makeText(this, "No songs saved yet.", Toast.LENGTH_SHORT).show(); return }
-        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain")
-            .putExtra(Intent.EXTRA_SUBJECT, Favourites.PLAYLIST)
-            .putExtra(Intent.EXTRA_TEXT, Favourites.text(favs)), "Share your favourite songs"))
-    }
-
-    // ---- Export to Spotify: the user's own Spotify app (Client ID), signed in with PKCE ----
-
-    private fun exportSpotify() {
-        if (Store.favourites(this).isEmpty()) { Toast.makeText(this, "No songs saved yet.", Toast.LENGTH_SHORT).show(); return }
-        val id = Store.spotifyClientId(this) ?: run { askSpotifyClientId(); return }
-        val verifier = Favourites.verifier()
-        val state = Favourites.verifier().take(16)
-        Store.saveSpotifyPending(this, verifier to state)
-        open(Favourites.spotifyAuthUrl(id, Favourites.challenge(verifier), state))
-    }
-
-    /**
-     * Spotify lets an app make playlists only once it's registered, so the set uses the
-     * user's own (free) Spotify developer app: this asks for its Client ID, with the steps.
-     */
-    private fun askSpotifyClientId() {
-        val field = EditText(this).apply {
-            hint = "Client ID (32 letters and digits)"; textSize = 18f
-            setText(Store.spotifyClientId(this@MainActivity) ?: "")
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-        }
-        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0); addView(field) }
-        AlertDialog.Builder(this)
-            .setTitle("Connect Spotify (once)")
-            .setMessage("To make playlists, Spotify needs you to register the set as your own app. It's free and takes a few minutes:\n\n" +
-                "1. On developer.spotify.com, log in and open the Dashboard.\n" +
-                "2. Create app: any name. Redirect URI: ${Favourites.SPOTIFY_REDIRECT}\n" +
-                "3. Tick \"Web API\", agree, and save.\n" +
-                "4. Open the app's settings, copy the Client ID and paste it below.\n\n" +
-                "(Long-press Export to Spotify to change it later.)")
-            .setView(box)
-            .setPositiveButton("Save & export") { _, _ ->
-                val id = field.text.toString().trim()
-                if (!Favourites.validClientId(id)) {
-                    Toast.makeText(this, "That doesn't look like a Spotify Client ID.", Toast.LENGTH_LONG).show()
-                    return@setPositiveButton
-                }
-                Store.saveSpotifyClientId(this, id)
-                exportSpotify()
-            }
-            .setNeutralButton("Open Spotify dashboard") { _, _ -> open("https://developer.spotify.com/dashboard") }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
-    /** Back from Spotify's sign-in page with a code (or a refusal). */
-    private fun handleCallback(intent: Intent?) {
-        val uri = intent?.data ?: return
-        if (uri.scheme != "oldtimesradio" || uri.host != "spotify-callback") return
-        intent.data = null   // handle it once
-        val (verifier, state) = Store.spotifyPending(this) ?: return
-        Store.saveSpotifyPending(this, null)
-        if (uri.getQueryParameter("state") != state) return
-        val code = uri.getQueryParameter("code")
-        if (code == null) {
-            Toast.makeText(this, "Spotify export cancelled.", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val id = Store.spotifyClientId(this) ?: return
-        runExport("Spotify") { progress ->
-            val token = Exporter.spotifyToken(id, code, verifier)
-            Exporter.toSpotify(token, Store.favourites(this), progress)
-        }
-    }
-
-    // ---- Export to YouTube: Google sign-in for the YouTube scope ----
-
-    private fun exportYouTube() {
-        if (Store.favourites(this).isEmpty()) { Toast.makeText(this, "No songs saved yet.", Toast.LENGTH_SHORT).show(); return }
-        // First time: the one-time Google Cloud setup comes before Google's sign-in.
-        if (!Store.youtubeReady(this)) { youtubeSetup(null, firstTime = true); return }
-        signInYouTube()
-    }
-
-    private fun signInYouTube() {
-        val req = com.google.android.gms.auth.api.identity.AuthorizationRequest.builder()
-            .setRequestedScopes(listOf(com.google.android.gms.common.api.Scope("https://www.googleapis.com/auth/youtube")))
-            .build()
-        runCatching {
-            com.google.android.gms.auth.api.identity.Identity.getAuthorizationClient(this).authorize(req)
-                .addOnSuccessListener { res ->
-                    if (res.hasResolution()) runCatching {
-                        startIntentSenderForResult(res.pendingIntent!!.intentSender, REQ_YOUTUBE, null, 0, 0, 0, null)
-                    }.onFailure { youtubeSetup(it.message) }
-                    else res.accessToken?.let { runYouTube(it) } ?: youtubeSetup(null)
-                }
-                .addOnFailureListener { youtubeSetup(googleReason(it)) }
-        }.onFailure { youtubeSetup(googleReason(it)) }
-    }
-
-    /**
-     * Google's answer in plain words. Its sign-in reports a missing or mismatched Cloud
-     * setup as an error code after the account is chosen, not as a message.
-     */
-    private fun googleReason(e: Throwable?): String {
-        val code = (e as? com.google.android.gms.common.api.ApiException)?.statusCode
-        return when (code) {
-            10 -> "Google doesn't recognise this copy of the set (code 10). The Android OAuth client's package name or " +
-                "SHA-1 doesn't match the ones below, or it's in a different project from the YouTube Data API."
-            16, 12501 -> "The sign-in was closed before Google gave access (code $code). If Google showed \"Access blocked\" " +
-                "or \"app not verified\", add your Google account as a test user on the OAuth consent screen."
-            7 -> "No connection to Google (code 7). Check the internet connection."
-            null -> e?.message ?: "Google didn't give access to YouTube after the account was chosen. This usually " +
-                "means the setup below isn't finished: most often the test user or the SHA-1."
-            else -> "Google said: code $code ${e.message.orEmpty()}".trim()
-        }
-    }
-
-    @Deprecated("Deprecated in Java")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQ_YOUTUBE) return
-        // Read Google's answer whatever the result code: a refusal after the account picker
-        // comes back as "cancelled" with the real reason inside.
-        val res = runCatching { com.google.android.gms.auth.api.identity.Identity.getAuthorizationClient(this).getAuthorizationResultFromIntent(data) }
-        val token = res.getOrNull()?.accessToken
-        when {
-            token != null -> runYouTube(token)
-            data == null && resultCode == RESULT_CANCELED -> youtubeSetup(googleReason(null))
-            else -> youtubeSetup(googleReason(res.exceptionOrNull()))
-        }
-    }
-
-    private fun runYouTube(token: String) = runExport("YouTube") { progress ->
-        Exporter.toYouTube(token, Store.favourites(this), progress).also { Store.saveYoutubeReady(this, true) }
-    }
-
-    /**
-     * Google lets the set ask for YouTube access only once it's registered in the user's own
-     * Google Cloud project: the steps, with this copy of the set's package and fingerprint.
-     */
-    private fun youtubeSetup(error: String?, firstTime: Boolean = false) {
-        val sha1 = signingSha1()
-        val b = AlertDialog.Builder(this)
-            .setTitle(if (error != null) "YouTube didn't connect" else "Connect YouTube (once)")
-            .setMessage("To make YouTube playlists, Google needs the set registered in your own Google Cloud project (free):\n\n" +
-                "1. On console.cloud.google.com, create a project.\n" +
-                "2. APIs & Services → Library: enable \"YouTube Data API v3\".\n" +
-                "3. Google Auth Platform (OAuth consent screen): Audience External, status Testing; " +
-                "under Test users, add the Google account you'll choose.\n" +
-                "4. Clients (Credentials) → Create client → Android, in the same project:\n" +
-                "   Package name: $packageName\n" +
-                "   SHA-1: $sha1\n\n" +
-                "A new client can take a few minutes to start working. YouTube's free daily allowance covers about 60 songs a day." +
-                (error?.let { "\n\nWhat went wrong: $it" } ?: ""))
-            .setNeutralButton("Copy SHA-1") { _, _ ->
-                getSystemService(android.content.ClipboardManager::class.java)
-                    ?.setPrimaryClip(android.content.ClipData.newPlainText("SHA-1", sha1))
-                Toast.makeText(this, "SHA-1 copied", Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton("Close", null)
-        if (firstTime || error != null) b.setPositiveButton(if (error != null) "Try again" else "It's set up: sign in") { _, _ ->
-            Store.saveYoutubeReady(this, true)
-            signInYouTube()
-        }
-        b.show()
-    }
-
-    /** The SHA-1 fingerprint of the key this copy of the set is signed with. */
-    private fun signingSha1(): String = runCatching {
-        val sig = if (Build.VERSION.SDK_INT >= 28)
-            packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES).signingInfo!!.apkContentsSigners[0]
-        else @Suppress("DEPRECATION") packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNATURES).signatures!![0]
-        java.security.MessageDigest.getInstance("SHA-1").digest(sig.toByteArray()).joinToString(":") { "%02X".format(it) }
-    }.getOrDefault("(unknown)")
-
-    /** Runs an export in the background with a progress dialog, then offers the playlist. */
-    private fun runExport(service: String, work: ((Int) -> Unit) -> Exporter.Result) {
-        val total = Store.favourites(this).size
-        val dialog = AlertDialog.Builder(this).setTitle("Export to $service")
-            .setMessage("Signing in…").setCancelable(false).show()
-        exporting = dialog
-        Thread {
-            val res = runCatching { work { i -> runOnUiThread { dialog.setMessage("Finding songs on $service… ${i + 1} of $total") } } }
-            runOnUiThread {
-                dialog.dismiss(); exporting = null
-                if (isFinishing) return@runOnUiThread
-                res.onSuccess { r ->
-                    val missed = if (r.missing.isEmpty()) "" else "\n\nNot found (${r.missing.size}):\n" +
-                        r.missing.take(12).joinToString("\n") { "• " + Favourites.line(it) } + (if (r.missing.size > 12) "\n…" else "")
-                    val b = AlertDialog.Builder(this).setTitle("Export to $service")
-                    if (r.playlistUrl == null) b.setMessage("None of the songs could be found on $service.$missed").setPositiveButton("OK", null)
-                    else b.setMessage("Made a private playlist, \"${Favourites.PLAYLIST}\", with ${r.added} song${if (r.added == 1) "" else "s"}.$missed")
-                        .setPositiveButton("Open playlist") { _, _ -> open(r.playlistUrl) }
-                        .setNegativeButton("Close", null)
-                    b.show()
-                }.onFailure { e ->
-                    if (service == "Spotify" && e.message?.contains("Client ID") == true) Store.saveSpotifyClientId(this, null)
-                    AlertDialog.Builder(this).setTitle("Export to $service")
-                        .setMessage("That didn't work: ${e.message ?: e.javaClass.simpleName}")
-                        .setPositiveButton("OK", null).show()
-                }
-            }
-        }.start()
-    }
-
     // ---- Lifecycle ----
 
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        handleCallback(intent)
-    }
 
     override fun onResume() {
         super.onResume()
@@ -952,7 +736,6 @@ class MainActivity : Activity() {
     }
 
     private companion object {
-        const val REQ_YOUTUBE = 7
         /** Last update check this run (wall clock ms); kept across screen rotations. */
         var lastUpdateCheck = 0L
     }

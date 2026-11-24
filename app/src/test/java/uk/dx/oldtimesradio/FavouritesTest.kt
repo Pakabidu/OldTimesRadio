@@ -30,33 +30,9 @@ class FavouritesTest {
 
     @Test fun textAndLinks() {
         val prog = FavouriteSong("", "The Jack Benny Program", st, 2L)
-        assertEquals("Ella Fitzgerald - Mack the Knife\nThe Jack Benny Program", Favourites.text(listOf(ella, prog)))
+        assertEquals("The Jack Benny Program", Favourites.line(prog))
         assertEquals("https://www.youtube.com/results?search_query=Ella+Fitzgerald+Mack+the+Knife", Favourites.youtubeSearch(ella))
         assertEquals("https://open.spotify.com/search/Ella%20Fitzgerald%20Mack%20the%20Knife", Favourites.spotifySearch(ella))
-        assertEquals("track:\"Mack the Knife\" artist:\"Ella Fitzgerald\"", Favourites.spotifyQuery(ella))
-        assertEquals("The Jack Benny Program", Favourites.spotifyQuery(prog))
-        assertEquals("Ella Fitzgerald Mack the Knife", Favourites.youtubeQuery(ella))
-    }
-
-    /** RFC 7636, appendix B. */
-    @Test fun pkceChallenge() =
-        assertEquals("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", Favourites.challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"))
-
-    @Test fun verifierShape() {
-        val v = Favourites.verifier()
-        assertTrue(v.length in 43..128)
-        assertTrue(Regex("^[A-Za-z0-9_-]+$").matches(v))
-    }
-
-    @Test fun spotifyUrls() {
-        val u = Favourites.spotifyAuthUrl("0123456789abcdef0123456789abcdef", "CH", "st8")
-        assertTrue(u.startsWith("https://accounts.spotify.com/authorize?response_type=code&client_id=0123456789abcdef0123456789abcdef"))
-        assertTrue(u.contains("&redirect_uri=oldtimesradio%3A%2F%2Fspotify-callback"))
-        assertTrue(u.contains("&scope=playlist-modify-private%20playlist-modify-public"))
-        assertTrue(u.contains("&code_challenge_method=S256&code_challenge=CH&state=st8"))
-        assertEquals("grant_type=authorization_code&code=a%2Bb&redirect_uri=oldtimesradio%3A%2F%2Fspotify-callback&client_id=id&code_verifier=v",
-            Favourites.spotifyTokenForm("id", "a+b", "v"))
-        assertTrue(Favourites.validClientId(" 0123456789ABCDEF0123456789abcdef "))
-        assertFalse(Favourites.validClientId("not-an-id"))
+        assertEquals("https://www.youtube.com/results?search_query=The+Jack+Benny+Program", Favourites.youtubeSearch(prog))
     }
 }

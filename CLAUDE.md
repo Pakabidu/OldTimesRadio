@@ -48,11 +48,9 @@ The whole app must feel like **warm, old radio equipment in used condition**: no
   speaker when one is connected, otherwise to `StreamService`. Device picking uses our own
   dialog via `MediaRouter`, not `MediaRouteButton` (that needs an AppCompat theme).
 - Favourites: the heart on `NowPlayingView` saves `FavouriteSong`s (`Favourites`: pure
-  rules, links, PKCE). `Exporter` makes playlists via the Spotify Web API (PKCE sign-in,
-  user's own Client ID, callback `oldtimesradio://spotify-callback`, so `MainActivity` is
-  singleTask) and YouTube Data API (Google Identity `AuthorizationClient`; needs the user's
-  own Cloud project with an Android OAuth client for the package + signing SHA-1). No API
-  keys or secrets live in the app.
+  rules and the YouTube/Spotify search links). No playlist export (the user removed it).
+- `LitPanel`: the ruled lists in the lid (station log, favourites); backlit amber with
+  glowing lettering when the mood light is on.
 - `Store`: preferences, including the station log as JSON.
 - `Updater`: reads the `latest` GitHub release of `Pakabidu/OldTimesRadio`.
 

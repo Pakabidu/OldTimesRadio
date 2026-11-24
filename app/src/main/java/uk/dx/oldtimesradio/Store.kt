@@ -44,23 +44,6 @@ object Store {
         p(ctx).edit().putString("favourites", a.toString()).apply()
     }
 
-    /** The user has done the Google Cloud setup for YouTube export (so skip the steps). */
-    fun youtubeReady(ctx: Context) = p(ctx).getBoolean("youtube_ready", false)
-    fun saveYoutubeReady(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("youtube_ready", on).apply()
-
-    /** The user's own Spotify app's Client ID, for exporting playlists. */
-    fun spotifyClientId(ctx: Context): String? = p(ctx).getString("spotify_client_id", null)
-    fun saveSpotifyClientId(ctx: Context, id: String?) = p(ctx).edit().putString("spotify_client_id", id).apply()
-
-    /** A Spotify sign-in under way (verifier and state), kept in case Android stops the app meanwhile. */
-    fun spotifyPending(ctx: Context): Pair<String, String>? {
-        val v = p(ctx).getString("spotify_verifier", null) ?: return null
-        val s = p(ctx).getString("spotify_state", null) ?: return null
-        return v to s
-    }
-    fun saveSpotifyPending(ctx: Context, pending: Pair<String, String>?) = p(ctx).edit()
-        .putString("spotify_verifier", pending?.first).putString("spotify_state", pending?.second).apply()
-
     /** SOUND rocker: the set's own clicks and the stream together. */
     fun sound(ctx: Context) = p(ctx).getBoolean("sound", true)
     fun saveSound(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("sound", on).apply()
