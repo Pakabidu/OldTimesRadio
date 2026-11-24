@@ -714,6 +714,12 @@ class MainActivity : Activity() {
 
     private fun exportYouTube() {
         if (Store.favourites(this).isEmpty()) { Toast.makeText(this, "No songs saved yet.", Toast.LENGTH_SHORT).show(); return }
+        // First time: the one-time Google Cloud setup comes before Google's sign-in.
+        if (!Store.youtubeReady(this)) { youtubeSetup(null, firstTime = true); return }
+        signInYouTube()
+    }
+
+    private fun signInYouTube() {
         val req = com.google.android.gms.auth.api.identity.AuthorizationRequest.builder()
             .setRequestedScopes(listOf(com.google.android.gms.common.api.Scope("https://www.googleapis.com/auth/youtube")))
             .build()
@@ -725,49 +731,76 @@ class MainActivity : Activity() {
                     }.onFailure { youtubeSetup(it.message) }
                     else res.accessToken?.let { runYouTube(it) } ?: youtubeSetup(null)
                 }
-                .addOnFailureListener { youtubeSetup(it.message) }
-        }.onFailure { youtubeSetup(it.message) }
+                .addOnFailureListener { youtubeSetup(googleReason(it)) }
+        }.onFailure { youtubeSetup(googleReason(it)) }
+    }
+
+    /**
+     * Google's answer in plain words. Its sign-in reports a missing or mismatched Cloud
+     * setup as an error code after the account is chosen, not as a message.
+     */
+    private fun googleReason(e: Throwable?): String {
+        val code = (e as? com.google.android.gms.common.api.ApiException)?.statusCode
+        return when (code) {
+            10 -> "Google doesn't recognise this copy of the set (code 10). The Android OAuth client's package name or " +
+                "SHA-1 doesn't match the ones below, or it's in a different project from the YouTube Data API."
+            16, 12501 -> "The sign-in was closed before Google gave access (code $code). If Google showed \"Access blocked\" " +
+                "or \"app not verified\", add your Google account as a test user on the OAuth consent screen."
+            7 -> "No connection to Google (code 7). Check the internet connection."
+            null -> e?.message ?: "Google didn't give access to YouTube after the account was chosen. This usually " +
+                "means the setup below isn't finished: most often the test user or the SHA-1."
+            else -> "Google said: code $code ${e.message.orEmpty()}".trim()
+        }
     }
 
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != REQ_YOUTUBE) return
-        if (resultCode != RESULT_OK) { Toast.makeText(this, "YouTube export cancelled.", Toast.LENGTH_SHORT).show(); return }
-        runCatching { com.google.android.gms.auth.api.identity.Identity.getAuthorizationClient(this).getAuthorizationResultFromIntent(data) }
-            .onSuccess { r -> r.accessToken?.let { runYouTube(it) } ?: youtubeSetup(null) }
-            .onFailure { youtubeSetup(it.message) }
+        // Read Google's answer whatever the result code: a refusal after the account picker
+        // comes back as "cancelled" with the real reason inside.
+        val res = runCatching { com.google.android.gms.auth.api.identity.Identity.getAuthorizationClient(this).getAuthorizationResultFromIntent(data) }
+        val token = res.getOrNull()?.accessToken
+        when {
+            token != null -> runYouTube(token)
+            data == null && resultCode == RESULT_CANCELED -> youtubeSetup(googleReason(null))
+            else -> youtubeSetup(googleReason(res.exceptionOrNull()))
+        }
     }
 
     private fun runYouTube(token: String) = runExport("YouTube") { progress ->
-        Exporter.toYouTube(token, Store.favourites(this), progress)
+        Exporter.toYouTube(token, Store.favourites(this), progress).also { Store.saveYoutubeReady(this, true) }
     }
 
     /**
      * Google lets the set ask for YouTube access only once it's registered in the user's own
      * Google Cloud project: the steps, with this copy of the set's package and fingerprint.
      */
-    private fun youtubeSetup(error: String?) {
+    private fun youtubeSetup(error: String?, firstTime: Boolean = false) {
         val sha1 = signingSha1()
-        AlertDialog.Builder(this)
-            .setTitle("Connect YouTube (once)")
+        val b = AlertDialog.Builder(this)
+            .setTitle(if (error != null) "YouTube didn't connect" else "Connect YouTube (once)")
             .setMessage("To make YouTube playlists, Google needs the set registered in your own Google Cloud project (free):\n\n" +
                 "1. On console.cloud.google.com, create a project.\n" +
                 "2. APIs & Services → Library: enable \"YouTube Data API v3\".\n" +
-                "3. OAuth consent screen: External; add your Google account as a test user.\n" +
-                "4. Credentials → Create OAuth client ID → Android:\n" +
+                "3. Google Auth Platform (OAuth consent screen): Audience External, status Testing; " +
+                "under Test users, add the Google account you'll choose.\n" +
+                "4. Clients (Credentials) → Create client → Android, in the same project:\n" +
                 "   Package name: $packageName\n" +
                 "   SHA-1: $sha1\n\n" +
-                "Then press Export to YouTube again. Each export can use about 100 songs' worth of YouTube's free daily allowance." +
-                (error?.let { "\n\n(Google said: $it)" } ?: ""))
-            .setPositiveButton("Copy SHA-1") { _, _ ->
+                "A new client can take a few minutes to start working. YouTube's free daily allowance covers about 60 songs a day." +
+                (error?.let { "\n\nWhat went wrong: $it" } ?: ""))
+            .setNeutralButton("Copy SHA-1") { _, _ ->
                 getSystemService(android.content.ClipboardManager::class.java)
                     ?.setPrimaryClip(android.content.ClipData.newPlainText("SHA-1", sha1))
                 Toast.makeText(this, "SHA-1 copied", Toast.LENGTH_SHORT).show()
             }
-            .setNeutralButton("Open Google Cloud") { _, _ -> open("https://console.cloud.google.com/apis/credentials") }
             .setNegativeButton("Close", null)
-            .show()
+        if (firstTime || error != null) b.setPositiveButton(if (error != null) "Try again" else "It's set up: sign in") { _, _ ->
+            Store.saveYoutubeReady(this, true)
+            signInYouTube()
+        }
+        b.show()
     }
 
     /** The SHA-1 fingerprint of the key this copy of the set is signed with. */

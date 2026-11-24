@@ -18,9 +18,10 @@ import android.view.MotionEvent
  * lit like the dial. A small engraved heading, then what the station says is on (or the
  * station's name), shrunk to fit and cut short with an ellipsis if it's very long.
  *
- * Beside it, the heart button: a bakelite push-button in a chrome ring with a cream heart
- * engraved on it. Pressing it saves the song that's on to the favourites ([onHeart]);
- * when the song is saved the heart glows warm red, lit from behind like a jewel lamp.
+ * Beside it, the heart button: a bakelite push-button in a chrome ring with a heart-shaped
+ * glass window, lit from behind like the set's jewel lamps. It glows warm amber when
+ * there's a song to save, deep red once the song is saved ([onHeart] saves or unsaves),
+ * and only faintly when the station isn't sending a title. It warms and dims with the set.
  */
 class NowPlayingView(ctx: Context) : CabinetView(ctx), MoodGlow {
     var heading = "NOW PLAYING"
@@ -47,6 +48,8 @@ class NowPlayingView(ctx: Context) : CabinetView(ctx), MoodGlow {
     private val well = paint(Color.argb(0x66, 0, 0, 0))
     private val engrave = paint { style = Paint.Style.STROKE; strokeWidth = 1.3f * d; strokeJoin = Paint.Join.ROUND }
     private val lit = paint()
+    private val halo = paint()
+    private val domeClip = Path()
     private val heartPath = Path()
     private val r = RectF()
     private val rim get() = 6 * d
@@ -58,7 +61,12 @@ class NowPlayingView(ctx: Context) : CabinetView(ctx), MoodGlow {
     override fun glows(): List<Glow> {
         if (inner.isEmpty) return emptyList()
         val out = arrayListOf(Glow(RectF(inner), Mood.AMBER, 0.4f + 0.7f * glow, screen = true, radius = 6 * d))
-        if (heart == Heart.SAVED) out += Glow(RectF(hx - hr * 0.7f, hy - hr * 0.7f, hx + hr * 0.7f, hy + hr * 0.7f), HEART_RED, 0.9f)
+        val hg = RectF(hx - hr * 0.8f, hy - hr * 0.8f, hx + hr * 0.8f, hy + hr * 0.8f)
+        when (heart) {
+            Heart.SAVED -> out += Glow(hg, HEART_RED, 0.6f + 0.5f * glow)
+            Heart.SONG -> out += Glow(hg, Mood.LAMP, 0.5f + 0.4f * glow)
+            Heart.NONE -> out += Glow(hg, Mood.AMBER, 0.15f)
+        }
         return out
     }
 
@@ -117,18 +125,32 @@ class NowPlayingView(ctx: Context) : CabinetView(ctx), MoodGlow {
             intArrayOf(Color.rgb(0x4A, 0x36, 0x28), Color.rgb(0x22, 0x18, 0x12), Color.rgb(0x0A, 0x07, 0x05)), null, Shader.TileMode.CLAMP)
         c.drawCircle(hx, hy + dy, hr * 0.92f, dome)
         c.save(); c.translate(0f, dy)
-        when (heart) {
-            Heart.SAVED -> {
-                // Lit from behind: a glowing red heart.
-                lit.shader = RadialGradient(hx - hr * 0.1f, hy - hr * 0.15f, hr * 0.7f,
-                    intArrayOf(Color.rgb(0xFF, 0xD0, 0xB0), HEART_RED, Color.rgb(0x8A, 0x18, 0x10)), floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP)
-                c.drawPath(heartPath, lit)
-                engrave.color = Color.argb(0x90, 0x3A, 0x08, 0x04); c.drawPath(heartPath, engrave)
-            }
-            // Cream paint in the engraving; dull when there's no song to save.
-            Heart.SONG -> { engrave.color = Color.argb(0xE0, 0xF0, 0xE4, 0xC4); c.drawPath(heartPath, engrave) }
-            Heart.NONE -> { engrave.color = Color.argb(0x70, 0xC8, 0xBC, 0xA0); c.drawPath(heartPath, engrave) }
+        // The lamp behind the heart: its colour and how bright, following the set's own lamps.
+        val (core, deep, bright) = when (heart) {
+            Heart.SAVED -> Triple(HEART_RED, Color.rgb(0x7A, 0x12, 0x0C), 0.75f + 0.25f * glow)
+            Heart.SONG -> Triple(HEART_AMBER, Color.rgb(0x8A, 0x4A, 0x10), 0.6f + 0.4f * glow)
+            Heart.NONE -> Triple(Color.rgb(0x6A, 0x40, 0x20), Color.rgb(0x24, 0x14, 0x0A), 0.35f)
         }
+        // Light spilling through the bakelite round the glass, kept to the dome.
+        domeClip.reset(); domeClip.addCircle(hx, hy, hr * 0.92f, Path.Direction.CW)
+        c.save(); c.clipPath(domeClip)
+        val a = (0xA0 * bright * (if (heart == Heart.NONE) 0.3f else 1f)).toInt().coerceIn(0, 255)
+        halo.shader = RadialGradient(hx, hy, hr * 0.95f,
+            intArrayOf(Color.argb(a, Color.red(core), Color.green(core), Color.blue(core)),
+                Color.argb(a / 3, Color.red(core), Color.green(core), Color.blue(core)),
+                Color.argb(0, Color.red(core), Color.green(core), Color.blue(core))),
+            floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP)
+        c.drawCircle(hx, hy, hr * 0.95f, halo)
+        c.restore()
+        // The heart-shaped glass itself, brightest in the middle like a bulb behind it.
+        val hot = Radio.mix(core, Color.WHITE, 0.55f * bright)
+        lit.shader = RadialGradient(hx - hr * 0.08f, hy - hr * 0.12f, hr * 0.75f,
+            intArrayOf(Radio.mix(deep, hot, bright), Radio.mix(deep, core, bright), deep), floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP)
+        c.drawPath(heartPath, lit)
+        // A chrome bead round the glass, and a glint on it.
+        engrave.color = Color.argb(0xC0, 0xC8, 0xC4, 0xB8); c.drawPath(heartPath, engrave)
+        lit.shader = null; lit.color = Color.argb((0x70 * bright).toInt(), 255, 255, 255)
+        c.drawCircle(hx - hr * 0.22f, hy - hr * 0.2f, hr * 0.08f, lit)
         // Thumb-polished shine on the dome.
         Wear.scuffs(c, RectF(hx - hr * 0.8f, hy - hr * 0.8f, hx + hr * 0.8f, hy + hr * 0.8f), 65, 1, d, alpha = 24)
         c.restore()
@@ -153,5 +175,6 @@ class NowPlayingView(ctx: Context) : CabinetView(ctx), MoodGlow {
 
     private companion object {
         val HEART_RED = Color.rgb(0xF0, 0x40, 0x2C)
+        val HEART_AMBER = Color.rgb(0xFF, 0xB0, 0x50)
     }
 }

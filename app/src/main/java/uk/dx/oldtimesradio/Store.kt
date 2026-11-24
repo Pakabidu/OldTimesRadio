@@ -44,6 +44,10 @@ object Store {
         p(ctx).edit().putString("favourites", a.toString()).apply()
     }
 
+    /** The user has done the Google Cloud setup for YouTube export (so skip the steps). */
+    fun youtubeReady(ctx: Context) = p(ctx).getBoolean("youtube_ready", false)
+    fun saveYoutubeReady(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("youtube_ready", on).apply()
+
     /** The user's own Spotify app's Client ID, for exporting playlists. */
     fun spotifyClientId(ctx: Context): String? = p(ctx).getString("spotify_client_id", null)
     fun saveSpotifyClientId(ctx: Context, id: String?) = p(ctx).edit().putString("spotify_client_id", id).apply()
