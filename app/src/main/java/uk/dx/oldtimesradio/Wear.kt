@@ -203,6 +203,16 @@ object Mood {
     val LAMP = Color.rgb(0xFF, 0xB8, 0x60)
     var on = false
 
+    /** The mood light's overlay, so parts can ask for their glow to be redrawn. */
+    private var overlay: java.lang.ref.WeakReference<View>? = null
+    fun attach(v: View) { overlay = java.lang.ref.WeakReference(v) }
+
+    /**
+     * A lit part changed how it glows (a lamp switched on or off): with the mood light
+     * on, the room's halos are redrawn at once, not only on the next scroll or layout.
+     */
+    fun relight() { if (on) overlay?.get()?.invalidate() }
+
     /** Applies or clears the backlit look on ordinary buttons and text (amber lettering with a glow). */
     fun styleText(root: View, d: Float) {
         if (root is ViewGroup) for (i in 0 until root.childCount) styleText(root.getChildAt(i), d)
@@ -235,7 +245,7 @@ class MoodLightView(ctx: Context, private val content: View) : View(ctx) {
     private val here = IntArray(2)
     private val there = IntArray(2)
 
-    init { isClickable = false; isFocusable = false; importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
+    init { isClickable = false; isFocusable = false; importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO; Mood.attach(this) }
 
     /** Fades the room light down (on) or back up (off). */
     fun set(on: Boolean) {

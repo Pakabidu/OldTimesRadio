@@ -30,12 +30,12 @@ class NowPlayingView(ctx: Context) : CabinetView(ctx), MoodGlow {
         set(v) { if (v != field) { field = v; invalidate() } }
     /** How far the lamp behind the window is up (0 cold, 1 full). */
     var glow = 1f
-        set(v) { if (v != field) { field = v; invalidate() } }
+        set(v) { if (v != field) { field = v; invalidate(); Mood.relight() } }
 
     /** What the heart button shows: no song to save, a song, or a song that's saved. */
     enum class Heart { NONE, SONG, SAVED }
     var heart = Heart.NONE
-        set(v) { if (v != field) { field = v; invalidate() } }
+        set(v) { if (v != field) { field = v; invalidate(); Mood.relight() } }
     var onHeart: (() -> Unit)? = null
 
     private val outer = RectF()

@@ -308,14 +308,19 @@ class GrilleView(ctx: Context) : CabinetView(ctx), MoodGlow {
  */
 class TonePlateView(ctx: Context) : CabinetView(ctx), MoodGlow {
     var switches: List<Pair<String, Boolean>> = emptyList()
-        set(v) { field = v; invalidate() }
+        set(v) { if (v != field) { field = v; invalidate(); Mood.relight() } }
     var onToggle: ((Int, Boolean) -> Unit)? = null
     var mood = false
-        set(v) { field = v; invalidate() }
+        set(v) { if (v != field) { field = v; invalidate(); Mood.relight() } }
     var onMood: ((Boolean) -> Unit)? = null
     /** Minutes left on the sleep timer (0 = off); drives the knob's pointer and lamp. */
     var sleepMinutes = 0f
-        set(v) { if (v != field) { field = v; invalidate() } }
+        set(v) {
+            if (v == field) return
+            val lampChanged = (v > 0f) != (field > 0f)
+            field = v; invalidate()
+            if (lampChanged) Mood.relight()
+        }
     var onSleep: (() -> Unit)? = null
 
     private val label = paint(Radio.INK) { typeface = Radio.SERIF; textSize = 9f * t; letterSpacing = 0.12f; textAlign = Paint.Align.CENTER }
