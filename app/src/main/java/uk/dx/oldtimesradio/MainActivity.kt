@@ -38,7 +38,6 @@ class MainActivity : Activity() {
     private lateinit var favBox: LinearLayout
     /** The song on now (from the station's titles), for the heart button; null if none. */
     private var song: FavouriteSong? = null
-    private lateinit var updateBtn: Button
     private var stations: List<RadioStation> = emptyList()
     private var downloadReceiver: android.content.BroadcastReceiver? = null
     private var pendingInstall = -1L   // build waiting for the user to allow installs
@@ -128,21 +127,6 @@ class MainActivity : Activity() {
         favBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         lid.addView(favBox)
         renderFavourites()
-
-        lid.addView(section("The set"))
-        lid.addView(TextView(this).apply {
-            textSize = 15f; typeface = Typeface.SERIF; setTextColor(Radio.CREAM); alpha = 0.9f; setPadding(0, dp(2), 0, dp(6))
-            text = "Plays internet radio streams (Shoutcast, Icecast and similar, MP3 or AAC). It keeps playing " +
-                "with the screen off; stop it from the notification or by pressing the lit button again. " +
-                "The meter's needle swings with the station's loudness. Flip CLOSE to stop the station and close the set."
-        })
-        updateBtn = radioButton("Check for updates") { checkForUpdate() }
-        lid.addView(updateBtn)
-        lid.addView(TextView(this).apply {
-            textSize = 13f; typeface = Radio.MONO; setTextColor(Radio.BRASS); gravity = Gravity.CENTER
-            setPadding(0, dp(4), 0, 0)
-            text = "OLD TIMES RADIO ${Updater.currentName(this@MainActivity)} · BUILD ${Updater.currentBuild(this@MainActivity)}"
-        })
 
         val scroll = ScrollView(this).apply {
             background = Radio.background(this@MainActivity)
@@ -561,16 +545,6 @@ class MainActivity : Activity() {
         setOnClickListener { Sfx.click(this@MainActivity); onClick() }
     }
 
-    private fun section(t: String) = TextView(this).apply {
-        textSize = 13.5f; letterSpacing = 0.22f; gravity = Gravity.CENTER
-        setPadding(dp(8), dp(3), dp(8), dp(3))
-        text = t.uppercase(); typeface = Radio.SERIF
-        setTextColor(Radio.INK)
-        background = GradientDrawable().apply { setColor(Radio.CREAM); cornerRadius = dp(1).toFloat() }
-        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, dp(20), 0, dp(8)) }
-    }
-
     // ---- Favourite songs ----
 
     /** The heart button: saves the song that's on, or takes it off the list again. */
@@ -741,26 +715,6 @@ class MainActivity : Activity() {
             return
         }
         startActivity(Updater.installIntent(this, file))
-    }
-
-    private fun checkForUpdate() {
-        updateBtn.isEnabled = false
-        updateBtn.text = "Checking…"
-        Thread {
-            val res = runCatching { Updater.check(this) }
-            runOnUiThread {
-                updateBtn.isEnabled = true
-                updateBtn.text = "Check for updates"
-                if (isFinishing) return@runOnUiThread
-                res.onSuccess { info ->
-                    if (info.newer) handleNewBuild(info, fromUser = true)
-                    else Toast.makeText(this, "You're up to date (build ${info.current})", Toast.LENGTH_SHORT).show()
-                }.onFailure {
-                    Toast.makeText(this, "Couldn't check for updates: ${it.message ?: it.javaClass.simpleName}",
-                        Toast.LENGTH_LONG).show()
-                }
-            }
-        }.start()
     }
 
     private companion object {
