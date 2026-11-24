@@ -39,8 +39,9 @@ The whole app must feel like **warm, old radio equipment in used condition**: no
   UI listens via `StreamService.listen`. It finds the playing station by URL, so the log
   can be reordered.
 - `BroadcastSetView`: the meter and the five preset buttons (the first five stations in
-  the log). `GrilleView`: speaker, valve glow and magic eye. `TonePlateView`: SOUND,
-  MOOD LIGHT and SLEEP. `NowPlayingView`: the lit title window.
+  the log). `GrilleView`: speaker, valve glow and magic eye. `TonePlateView`: CLOSE
+  (stops everything and kills the app), CAST, MOOD LIGHT and SLEEP. (SOUND/mute was
+  removed; the mute plumbing is dormant and `Store.sound` is forced on.) `NowPlayingView`: the lit title window.
 - `Caster`: casting to Google Cast (Default Media Receiver; `CastSetup` is the options
   provider) and DLNA renderers (`Upnp`: SSDP search, device description, AVTransport /
   RenderingControl SOAP; pure java.net, tested against a fake renderer in `UpnpTest`).

@@ -78,6 +78,7 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 33 && savedInstanceState == null &&
             checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED
         ) requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 1)
+        if (!Store.sound(this)) Store.saveSound(this, true)   // the SOUND rocker is gone: never stay muted
         Sfx.init(this)
         Caster.init(this)
         Mood.on = Store.moodLight(this)
@@ -132,7 +133,7 @@ class MainActivity : Activity() {
             textSize = 15f; typeface = Typeface.SERIF; setTextColor(Radio.CREAM); alpha = 0.9f; setPadding(0, dp(2), 0, dp(6))
             text = "Plays internet radio streams (Shoutcast, Icecast and similar, MP3 or AAC). It keeps playing " +
                 "with the screen off; stop it from the notification or by pressing the lit button again. " +
-                "The meter's needle swings with the station's loudness. SOUND off mutes the set without losing the station."
+                "The meter's needle swings with the station's loudness. Flip CLOSE to stop the station and close the set."
         })
         updateBtn = radioButton("Check for updates") { checkForUpdate() }
         lid.addView(updateBtn)
@@ -196,7 +197,7 @@ class MainActivity : Activity() {
         upper.addView(grille)
         tonePlate = TonePlateView(this).apply {
             switches = toneSwitches()
-            onToggle = { i, on -> if (i == 0) setSound(on) else castSwitch() }
+            onToggle = { i, _ -> if (i == 0) closeSet() else castSwitch() }
             mood = Mood.on
             onMood = { on -> setMood(on) }
             onSleep = { turnSleepKnob() }
@@ -213,7 +214,6 @@ class MainActivity : Activity() {
                 grille.glow = valves; grille.eye = level
             }
             onLongPress = { i -> if (i < this@MainActivity.stations.size) stationMenu(i) else editStation(-1) }
-            muted = !Store.sound(this@MainActivity)
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(250)).apply { topMargin = dp(12) }
         }
         front.addView(radioSet)
@@ -299,14 +299,28 @@ class MainActivity : Activity() {
         if (isOn(i)) stopPlaying() else play(stations[i])
     }
 
-    private fun toneSwitches() = listOf("SOUND" to Store.sound(this), "CAST" to Caster.connected)
+    /** CLOSE is the set's power switch: on (lamp lit) while it's open. */
+    private fun toneSwitches() = listOf("CLOSE" to !closing, "CAST" to Caster.connected)
 
-    private fun setSound(on: Boolean) {
-        Store.saveSound(this, on)
-        StreamService.soundChanged(this)
-        Caster.mute(!on)
-        radioSet.muted = !on
+    private var closing = false
+
+    /**
+     * The CLOSE rocker: stops the station (and any speaker it's casting to), turns the
+     * sleep timer off, and closes the app completely. The rocker flips to O and its lamp
+     * goes out first, with the switch's click, so it feels like switching the set off.
+     */
+    private fun closeSet() {
+        if (closing) return
+        closing = true
         Sfx.click(this)
+        tonePlate.switches = toneSwitches()
+        StreamService.stopNow()
+        if (Caster.connected) { Caster.stop(); Caster.disconnect() }
+        // A moment for the click, the lamps to go down, and a cast speaker to hear "stop".
+        tonePlate.postDelayed({
+            finishAndRemoveTask()
+            tonePlate.postDelayed({ android.os.Process.killProcess(android.os.Process.myPid()) }, 400L)
+        }, 600L)
     }
 
     /**

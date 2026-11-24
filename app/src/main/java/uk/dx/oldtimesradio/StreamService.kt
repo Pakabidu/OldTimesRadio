@@ -183,6 +183,12 @@ class StreamService : Service() {
             if (state == State.OFF) return
             ctx.startService(Intent(ctx, StreamService::class.java).setAction(ACTION_STOP))
         }
+
+        /** Switches the set off at once, on this thread (for closing the app). Main thread only. */
+        fun stopNow() {
+            clearSleep()
+            current?.shutDown()
+        }
     }
 
     private var player: ExoPlayer? = null
