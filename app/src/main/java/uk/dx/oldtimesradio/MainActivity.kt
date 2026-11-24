@@ -103,13 +103,6 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 0, 0, dp(8)) }
         })
-        lid.addView(TextView(this).apply {
-            textSize = 15f; typeface = Typeface.SERIF; setTextColor(Radio.CREAM); alpha = 0.9f; setPadding(0, dp(2), 0, dp(8))
-            text = "Tap a station to play it. The first five sit on the set's buttons. " +
-                "Long-press a station (or its button) to change, move or remove it. " +
-                "Tap the SLEEP knob to have the set fade out and switch itself off after 15, 30, 60 or 90 minutes. " +
-                "Flip CAST to play on a Chromecast, Google/Nest speaker, or a DLNA TV, Sonos or receiver on your Wi-Fi."
-        })
         log = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         lid.addView(log)
         lid.addView(radioButton("Add a station") { editStation(-1) })
@@ -119,14 +112,14 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, dp(22), 0, dp(8)) }
         })
-        lid.addView(TextView(this).apply {
-            textSize = 15f; typeface = Typeface.SERIF; setTextColor(Radio.CREAM); alpha = 0.9f; setPadding(0, dp(2), 0, dp(8))
-            text = "Press the heart beside the now-playing window to save the song that's on (when the station " +
-                "sends song titles). Tap a saved song to find it on YouTube or Spotify."
-        })
         favBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         lid.addView(favBox)
         renderFavourites()
+
+        // All the how-to, kept out of the way behind one button at the bottom.
+        lid.addView(radioButton("Help") { showHelp() }.apply {
+            (layoutParams as LinearLayout.LayoutParams).topMargin = dp(22)
+        })
 
         val scroll = ScrollView(this).apply {
             background = Radio.background(this@MainActivity)
@@ -630,6 +623,74 @@ class MainActivity : Activity() {
     private fun open(url: String) {
         runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
             .onFailure { Toast.makeText(this, "Nothing on this phone can open that link.", Toast.LENGTH_SHORT).show() }
+    }
+
+    // ---- Help ----
+
+    /** What every part of the set does, on a black instruction panel like the lid's. */
+    private fun showHelp() {
+        val dialog = android.app.Dialog(this, android.R.style.Theme_Translucent_NoTitleBar)
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(26), dp(24), dp(26), dp(22))
+            background = Radio.LidDrawable(this@MainActivity)
+        }
+        panel.addView(LitNameplate(this, "How to use the set").apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 0, 0, dp(6)) }
+        })
+        val text = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(4), 0, dp(4), dp(8)) }
+        fun heading(t: String) = text.addView(TextView(this).apply {
+            this.text = t.uppercase(); textSize = 14f; typeface = Radio.SERIF; letterSpacing = 0.2f
+            setTextColor(Radio.GOLD); setPadding(0, dp(16), 0, dp(4))
+        })
+        fun para(t: String) = text.addView(TextView(this).apply {
+            this.text = t; textSize = 17f; typeface = Typeface.SERIF; setTextColor(Radio.CREAM)
+            setLineSpacing(0f, 1.15f); setPadding(0, dp(2), 0, dp(4))
+        })
+        heading("The set")
+        para("Plays internet radio streams (Shoutcast, Icecast and similar, MP3 or AAC). It keeps playing " +
+            "with the screen off; stop it from the notification or by pressing the lit button again. " +
+            "The meter's needle swings with the station's loudness, and the green eye pulses with the music.")
+        heading("Stations")
+        para("Tap a station to play it. The first five sit on the set's buttons. " +
+            "Long-press a station (or its button) to change, move or remove it. " +
+            "Add a station with the button under the station log.")
+        heading("Favourite songs")
+        para("Press the heart beside the now-playing window to save the song that's on (when the station " +
+            "sends song titles). Press it again to take the song off. Tap a saved song to find it on YouTube or Spotify.")
+        heading("Switches and knobs")
+        para("CLOSE: stops the station and closes the set.")
+        para("CAST: plays on a Chromecast, Google/Nest speaker, or a DLNA TV, Sonos or receiver on your Wi-Fi. " +
+            "Flip it again to stop casting.")
+        para("SCREEN ON: keeps the phone's screen awake while the set is open.")
+        para("MOOD LIGHT: dims the room so the dials, lamps and lists glow.")
+        para("SLEEP: tap the knob to have the set fade out and switch itself off after 15, 30, 60 or 90 minutes; " +
+            "tap past 90 to turn it off. The pointer winds back as the time runs down.")
+        heading("In the car")
+        para("Bluetooth car stereos and headphones show the song and the station. Their next and previous " +
+            "buttons change station.")
+        heading("Updates")
+        para("The set looks for a new version each time it opens and offers to install it.")
+        text.addView(TextView(this).apply {
+            this.text = "OLD TIMES RADIO ${Updater.currentName(this@MainActivity)} · BUILD ${Updater.currentBuild(this@MainActivity)}"
+            textSize = 13f; typeface = Radio.MONO; setTextColor(Radio.BRASS); gravity = Gravity.CENTER
+            setPadding(0, dp(18), 0, 0)
+        })
+        panel.addView(ScrollView(this).apply {
+            addView(text)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+        })
+        panel.addView(radioButton("Close") { dialog.dismiss() })
+        dialog.setContentView(FrameLayout(this).apply {
+            setBackgroundColor(Color.argb(0xC0, 0, 0, 0))   // the room behind, dimmed
+            setPadding(dp(14), dp(28), dp(14), dp(28))
+            addView(panel, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+            setOnClickListener { dialog.dismiss() }
+        })
+        panel.isClickable = true   // taps on the panel itself don't close it
+        if (Mood.on) Mood.styleText(panel, resources.displayMetrics.density)
+        dialog.show()
     }
 
     // ---- Lifecycle ----
