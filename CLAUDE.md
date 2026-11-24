@@ -12,7 +12,8 @@ The whole app must feel like **warm, old radio equipment in used condition**: no
 
 - **Warm light.** Dials, meters, jewel lamps, name windows and the valve glow behind the
   grille glow amber/orange like valve-era lamps behind old glass. Lit things should look
-  lit; prefer warm wattage over cold white. The only green is the magic eye. Lights warm
+  lit; prefer warm wattage over cold white. The only green is the magic eye; the only
+  red is the lit heart. Lights warm
   up and dim with the set (`BroadcastSetView`'s lamp glow, `onLight`). Anything lit
   implements `MoodGlow` so it glows under the mood light.
 - **Used, not new.** Use the `Wear` helpers (scratches, scuffs, grime, dust, chips,
@@ -46,6 +47,12 @@ The whole app must feel like **warm, old radio equipment in used condition**: no
   `MainActivity`'s `playState()`/`play()`/`stopPlaying()` send everything to the cast
   speaker when one is connected, otherwise to `StreamService`. Device picking uses our own
   dialog via `MediaRouter`, not `MediaRouteButton` (that needs an AppCompat theme).
+- Favourites: the heart on `NowPlayingView` saves `FavouriteSong`s (`Favourites`: pure
+  rules, links, PKCE). `Exporter` makes playlists via the Spotify Web API (PKCE sign-in,
+  user's own Client ID, callback `oldtimesradio://spotify-callback`, so `MainActivity` is
+  singleTask) and YouTube Data API (Google Identity `AuthorizationClient`; needs the user's
+  own Cloud project with an Android OAuth client for the package + signing SHA-1). No API
+  keys or secrets live in the app.
 - `Store`: preferences, including the station log as JSON.
 - `Updater`: reads the `latest` GitHub release of `Pakabidu/OldTimesRadio`.
 
@@ -55,8 +62,9 @@ The whole app must feel like **warm, old radio equipment in used condition**: no
   (`.github/workflows/build.yml`) runs unit tests and builds the APK on every push;
   watch it. Only builds from `main` are published as releases (with `version.txt`),
   which the in-app updater reads (it checks on every start, and at most hourly on return).
-- Pure-Kotlin modules (`Stations`, `Sleep`, `Tags`, `Upnp`) have JVM tests in `app/src/test`. Run them
+- Pure-Kotlin modules (`Stations`, `Sleep`, `Tags`, `Upnp`, `Favourites`) have JVM tests in `app/src/test`. Run them
   locally with a plain Kotlin/JVM Gradle project. Keep new rules pure so they're testable.
+  Tests compile against android.jar on CI: no JDK-only APIs (e.g. `com.sun.net.httpserver`).
 - Preview custom-drawn UI with a browser canvas mock (same geometry) before pushing.
 - Watch for name clashes in the single `uk.dx.oldtimesradio` package (e.g. `Station`).
 - Default stream URLs can't be checked from the cloud container (the network blocks

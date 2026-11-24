@@ -49,5 +49,7 @@ dependencies {
     // Google Cast: Chromecast, Google/Nest speakers and Cast TVs.
     implementation("com.google.android.gms:play-services-cast-framework:21.4.0")
     implementation("androidx.mediarouter:mediarouter:1.6.0")
+    // Google sign-in for the YouTube scope, to export favourite songs as a playlist.
+    implementation("com.google.android.gms:play-services-auth:21.2.0")
     testImplementation("junit:junit:4.13.2")
 }
