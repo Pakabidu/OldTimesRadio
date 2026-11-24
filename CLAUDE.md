@@ -41,7 +41,8 @@ The whole app must feel like **warm, old radio equipment in used condition**: no
 - `BroadcastSetView`: the meter and the five preset buttons (the first five stations in
   the log). `GrilleView`: speaker, valve glow and magic eye (a full green disc
   pulsing with the music level). `TonePlateView`: CLOSE
-  (stops everything and kills the app), CAST, MOOD LIGHT and SLEEP. (SOUND/mute was
+  (stops everything and kills the app), CAST, SCREEN ON (FLAG_KEEP_SCREEN_ON, remembered),
+  MOOD LIGHT and SLEEP. (SOUND/mute was
   removed; the mute plumbing is dormant and `Store.sound` is forced on.) `NowPlayingView`: the lit title window.
 - `Caster`: casting to Google Cast (Default Media Receiver; `CastSetup` is the options
   provider) and DLNA renderers (`Upnp`: SSDP search, device description, AVTransport /

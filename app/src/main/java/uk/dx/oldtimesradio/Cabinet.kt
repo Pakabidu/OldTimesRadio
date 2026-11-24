@@ -301,7 +301,7 @@ class GrilleView(ctx: Context) : CabinetView(ctx), MoodGlow {
 }
 
 /**
- * Narrow chrome plate of big, well-used rocker switches (CLOSE, CAST), each with a jewel
+ * Narrow chrome plate of big, well-used rocker switches (CLOSE, CAST, SCREEN ON), each with a jewel
  * lamp, the MOOD LIGHT knob, and the SLEEP timer knob in the second socket. The rockers
  * and the mood knob are real toggles; tapping the sleep knob turns it to the next mark,
  * and its pointer winds back towards OFF as the time runs down, like a clockwork timer.

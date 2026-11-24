@@ -48,6 +48,10 @@ object Store {
     fun sound(ctx: Context) = p(ctx).getBoolean("sound", true)
     fun saveSound(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("sound", on).apply()
 
+    /** SCREEN ON rocker: keep the phone's screen awake while the set is open. */
+    fun keepScreenOn(ctx: Context) = p(ctx).getBoolean("keep_screen_on", false)
+    fun saveKeepScreenOn(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("keep_screen_on", on).apply()
+
     fun moodLight(ctx: Context) = p(ctx).getBoolean("mood_light", false)
     fun saveMoodLight(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("mood_light", on).apply()
 

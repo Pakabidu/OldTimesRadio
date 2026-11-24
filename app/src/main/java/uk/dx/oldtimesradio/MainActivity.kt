@@ -80,6 +80,7 @@ class MainActivity : Activity() {
         ) requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 1)
         if (!Store.sound(this)) Store.saveSound(this, true)   // the SOUND rocker is gone: never stay muted
         Sfx.init(this)
+        applyKeepScreenOn()
         Caster.init(this)
         Mood.on = Store.moodLight(this)
         stations = Store.stations(this)
@@ -189,7 +190,7 @@ class MainActivity : Activity() {
         }
         val upper = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(270))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(320))
         }
         grille = GrilleView(this).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.6f)
@@ -197,7 +198,7 @@ class MainActivity : Activity() {
         upper.addView(grille)
         tonePlate = TonePlateView(this).apply {
             switches = toneSwitches()
-            onToggle = { i, _ -> if (i == 0) closeSet() else castSwitch() }
+            onToggle = { i, on -> when (i) { 0 -> closeSet(); 1 -> castSwitch(); else -> setKeepScreenOn(on) } }
             mood = Mood.on
             onMood = { on -> setMood(on) }
             onSleep = { turnSleepKnob() }
@@ -300,7 +301,20 @@ class MainActivity : Activity() {
     }
 
     /** CLOSE is the set's power switch: on (lamp lit) while it's open. */
-    private fun toneSwitches() = listOf("CLOSE" to !closing, "CAST" to Caster.connected)
+    private fun toneSwitches() = listOf("CLOSE" to !closing, "CAST" to Caster.connected, "SCREEN ON" to Store.keepScreenOn(this))
+
+    /** The SCREEN ON rocker: the screen stays awake while the set is open (Android's own flag, so it lapses when the app's closed). */
+    private fun setKeepScreenOn(on: Boolean) {
+        Sfx.click(this)
+        Store.saveKeepScreenOn(this, on)
+        applyKeepScreenOn()
+        Toast.makeText(this, if (on) "The screen will stay on while the set is open" else "The screen will sleep as usual", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun applyKeepScreenOn() {
+        if (Store.keepScreenOn(this)) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
 
     private var closing = false
 

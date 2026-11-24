@@ -11,6 +11,7 @@ PropWatch.
 - Tap a button (or a station in the log) to play; tap the lit one again to switch off.
 - Long-press to change, move or remove a station; the first five in the log sit on the buttons.
 - Plays Shoutcast/Icecast MP3 and AAC streams in the background, with a notification.
+- SCREEN ON rocker keeps the phone's screen awake while the set is open.
 - CLOSE rocker stops the station (and any cast speaker) and closes the app; MOOD LIGHT darkens
   the room so the dials glow.
 - Heart button beside the now-playing window: saves the song that's on to Favourite Songs in
