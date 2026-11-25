@@ -229,7 +229,11 @@ class MainActivity : Activity() {
                 nowPlaying.heading = if (speaker != null) "CASTING TO ${speaker.uppercase()}" else "THE SET IS OFF"
                 nowPlaying.text = "Press a station button"
             }
-            StreamService.State.TUNING -> { nowPlaying.heading = "TUNING IN"; nowPlaying.text = st?.name ?: "…" }
+            StreamService.State.TUNING -> {
+                // Lost the signal and trying again: say so, so it doesn't look stuck.
+                nowPlaying.heading = if (speaker == null && StreamService.reconnecting) "RECONNECTING" else "TUNING IN"
+                nowPlaying.text = st?.name ?: "…"
+            }
             StreamService.State.ERROR -> { nowPlaying.heading = "NO SIGNAL"; nowPlaying.text = st?.name ?: "Try another station" }
             StreamService.State.PLAYING -> if (speaker != null) {
                 nowPlaying.heading = "ON ${speaker.uppercase()}"
@@ -651,7 +655,8 @@ class MainActivity : Activity() {
         heading("The set")
         para("Plays internet radio streams (Shoutcast, Icecast and similar, MP3 or AAC). It keeps playing " +
             "with the screen off; stop it from the notification or by pressing the lit button again. " +
-            "The meter's needle swings with the station's loudness, and the green eye pulses with the music.")
+            "The meter's needle swings with the station's loudness, and the green eye pulses with the music. " +
+            "If the internet drops out, the set reconnects by itself when it comes back.")
         heading("Stations")
         para("Tap a station to play it. The first five sit on the set's buttons. " +
             "Long-press a station (or its button) to change, move or remove it. " +
@@ -669,7 +674,7 @@ class MainActivity : Activity() {
             "tap past 90 to turn it off. The pointer winds back as the time runs down.")
         heading("In the car")
         para("Bluetooth car stereos and headphones show the song and the station. Their next and previous " +
-            "buttons change station.")
+            "buttons change station; pause and play pause the set and bring the same station back.")
         heading("Updates")
         para("The set looks for a new version each time it opens and offers to install it.")
         text.addView(TextView(this).apply {

@@ -36,7 +36,9 @@ The whole app must feel like **warm, old radio equipment in used condition**: no
   runs a Media3 `MediaSession` whose metadata (built by `Tags`: song / artist / station)
   is what Bluetooth AVRCP car stereos show; tags go on the media item (which beats the
   stream's own), and next/previous step through the log. The
-  UI listens via `StreamService.listen`. It finds the playing station by URL, so the log
+  UI listens via `StreamService.listen`. Dropouts (network errors, the stream ending
+  or stalling) reconnect with back-off per `Reconnect` (pure, tested) and immediately when the
+  network returns; a car's Stop/Pause only pauses (session kept), Play resumes or retunes. It finds the playing station by URL, so the log
   can be reordered.
 - `BroadcastSetView`: the meter and the five preset buttons (the first five stations in
   the log). `GrilleView`: speaker, valve glow and magic eye (a full green disc
@@ -63,7 +65,7 @@ The whole app must feel like **warm, old radio equipment in used condition**: no
   (`.github/workflows/build.yml`) runs unit tests and builds the APK on every push;
   watch it. Only builds from `main` are published as releases (with `version.txt`),
   which the in-app updater reads (it checks on every start, and at most hourly on return).
-- Pure-Kotlin modules (`Stations`, `Sleep`, `Tags`, `Upnp`, `Favourites`) have JVM tests in `app/src/test`. Run them
+- Pure-Kotlin modules (`Stations`, `Sleep`, `Tags`, `Upnp`, `Favourites`, `Reconnect`) have JVM tests in `app/src/test`. Run them
   locally with a plain Kotlin/JVM Gradle project. Keep new rules pure so they're testable.
   Tests compile against android.jar on CI: no JDK-only APIs (e.g. `com.sun.net.httpserver`).
 - Preview custom-drawn UI with a browser canvas mock (same geometry) before pushing.

@@ -10,6 +10,8 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -71,6 +73,8 @@ class StreamService : Service() {
         var url: String? = null; private set
         /** What the station says is on ("Artist - Title"), from the stream's ICY metadata. */
         var nowPlaying: String? = null; private set
+        /** Trying the station again after the internet dropped or the stream stalled. */
+        var reconnecting = false; private set
         var error: String? = null; private set
         private val listeners = mutableSetOf<() -> Unit>()
         fun listen(l: () -> Unit) { listeners += l }
@@ -180,7 +184,7 @@ class StreamService : Service() {
         private fun clearSleep() { sleepAt = 0L; clock.removeCallbacks(sleepTick) }
 
         fun stop(ctx: Context) {
-            if (state == State.OFF) return
+            if (state == State.OFF && current == null) return   // a set paused by the car is still running
             ctx.startService(Intent(ctx, StreamService::class.java).setAction(ACTION_STOP))
         }
 
@@ -195,6 +199,82 @@ class StreamService : Service() {
     private var session: MediaSession? = null
     private var name = ""
     private val main = Handler(Looper.getMainLooper())
+
+    // ---- Staying on the air: reconnecting after dropouts, and pausing for the car ----
+
+    /** The station has played since it was tuned (so a later error is a dropout, not a bad address). */
+    private var everPlayed = false
+    /** When things first went wrong (elapsedRealtime), or 0 while all's well. */
+    private var failingSince = 0L
+    private var attempt = 0
+    /** When a car, headphones or another app paused the set (elapsedRealtime), or 0. */
+    private var pausedAt = 0L
+    private var network: ConnectivityManager.NetworkCallback? = null
+
+    private val retry = Runnable { reconnectNow() }
+    /** Buffering for ages with nothing arriving: the stream has silently dropped. */
+    private val stall = Runnable {
+        val p = player ?: return@Runnable
+        if (p.playbackState == Player.STATE_BUFFERING && p.playWhenReady) dropped(everPlayed = true, code = 2002)
+    }
+    /** Left paused by the car for a long time: switch off to save the battery. */
+    private val standby = Runnable { if (pausedAt != 0L) shutDown() }
+
+    /**
+     * The stream went away. Worth another try (network trouble, or a station that had been
+     * playing): keep the set on, say so, and try again after a pause that grows each time.
+     * Otherwise, or after ten minutes of trying, it's NO SIGNAL as before.
+     */
+    private fun dropped(everPlayed: Boolean, code: Int, message: String? = null) {
+        val now = SystemClock.elapsedRealtime()
+        if (Reconnect.retryable(code, everPlayed) && (failingSince == 0L || Reconnect.keepTrying(failingSince, now))) {
+            if (failingSince == 0L) failingSince = now
+            reconnecting = true
+            set(State.TUNING)
+            startInForeground("Reconnecting…")
+            main.removeCallbacks(retry)
+            main.postDelayed(retry, Reconnect.delay(attempt++))
+        } else {
+            set(State.ERROR, err = "Couldn't tune in: " + (message ?: "no signal"))
+            shutDown(keepError = true)
+        }
+    }
+
+    /** Tune the same station in again, keeping what we know about it. */
+    private fun reconnectNow() {
+        val p = player ?: return
+        val u = url ?: return
+        main.removeCallbacks(retry)
+        pausedAt = 0L; main.removeCallbacks(standby)
+        p.setMediaItem(MediaItem.Builder().setUri(u).setMediaMetadata(meta(Tags.of(name, nowPlaying))).build())
+        p.prepare()
+        p.playWhenReady = true
+        applySound()
+    }
+
+    /** Play from a car, headphones or the lock screen: resume, or tune in afresh if it's been a while. */
+    private fun resume() {
+        val p = player ?: return
+        val stale = pausedAt != 0L && SystemClock.elapsedRealtime() - pausedAt > Reconnect.STALE_PAUSE_MS
+        if (stale || p.playbackState == Player.STATE_IDLE || p.playbackState == Player.STATE_ENDED) {
+            attempt = 0; reconnectNow()
+        } else { pausedAt = 0L; main.removeCallbacks(standby); p.play() }
+    }
+
+    /** The internet's back: try at once rather than waiting out the delay. */
+    private fun watchNetwork() {
+        if (network != null) return
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(n: Network) { main.post { if (reconnecting && player != null) { attempt = 0; reconnectNow() } } }
+        }
+        runCatching { cm.registerDefaultNetworkCallback(cb); network = cb }
+    }
+
+    private fun unwatchNetwork() {
+        network?.let { cb -> runCatching { getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(cb) } }
+        network = null
+    }
 
     /** Measures each decoded buffer on its way to the speaker. */
     private class Meter : TeeAudioProcessor.AudioBufferSink {
@@ -257,8 +337,37 @@ class StreamService : Service() {
             p.setHandleAudioBecomingNoisy(true)                              // headphones out: pause
             p.setWakeMode(C.WAKE_MODE_NETWORK)                               // keep streaming with the screen off
             p.addListener(object : Player.Listener {
-                override fun onPlaybackStateChanged(s: Int) = update()
-                override fun onIsPlayingChanged(playing: Boolean) = update()
+                override fun onPlaybackStateChanged(s: Int) {
+                    main.removeCallbacks(stall)
+                    when (s) {
+                        Player.STATE_BUFFERING -> if (p.playWhenReady) main.postDelayed(stall, Reconnect.STALL_MS)
+                        // A live stream never really ends: the connection was cut.
+                        Player.STATE_ENDED -> { dropped(everPlayed = true, code = 2001); return }
+                    }
+                    update()
+                }
+                override fun onIsPlayingChanged(playing: Boolean) {
+                    if (playing) {   // on the air: all's well again
+                        everPlayed = true; failingSince = 0L; attempt = 0
+                        if (reconnecting) { reconnecting = false }
+                        main.removeCallbacks(retry); main.removeCallbacks(stall)
+                    }
+                    update()
+                }
+                // Paused by a car, headphones being pulled out, or another app taking the sound:
+                // the set shows it's off but keeps the station, so Play brings it back.
+                override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                    if (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) return
+                    main.removeCallbacks(standby)
+                    if (!playWhenReady) {
+                        pausedAt = SystemClock.elapsedRealtime()
+                        main.removeCallbacks(retry); main.removeCallbacks(stall)
+                        reconnecting = false
+                        set(State.OFF)
+                        startInForeground("Paused")
+                        main.postDelayed(standby, Reconnect.STANDBY_MS)
+                    } else pausedAt = 0L
+                }
                 // Shoutcast/Icecast "StreamTitle": the song or programme on now. Read from the
                 // raw stream metadata, since the player's own metadata carries our tags.
                 override fun onMetadata(m: Metadata) {
@@ -272,10 +381,7 @@ class StreamService : Service() {
                     main.post { if (player != null) { title(icy); retag(); update() } }
                 }
                 override fun onPlayerError(e: PlaybackException) {
-                    main.post {
-                        set(State.ERROR, err = "Couldn't tune in: " + (e.cause?.message ?: e.errorCodeName))
-                        shutDown(keepError = true)
-                    }
+                    main.post { if (player != null) dropped(everPlayed, e.errorCode, e.cause?.message ?: e.errorCodeName) }
                 }
             })
             player = p
@@ -285,6 +391,10 @@ class StreamService : Service() {
                     PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
                 .build()
         }
+        // A new station: start afresh.
+        everPlayed = false; failingSince = 0L; attempt = 0; reconnecting = false; pausedAt = 0L
+        main.removeCallbacks(retry); main.removeCallbacks(stall); main.removeCallbacks(standby)
+        watchNetwork()
         set(State.TUNING, url)
         p.setMediaItem(MediaItem.Builder().setUri(url).setMediaMetadata(meta(Tags.of(name, null))).build())
         p.prepare()
@@ -349,7 +459,13 @@ class StreamService : Service() {
         override fun seekToNextMediaItem() = step(1)
         override fun seekToPrevious() = step(-1)
         override fun seekToPreviousMediaItem() = step(-1)
-        override fun stop() { main.post { shutDown() } }
+        // Car stereos often send Stop for pause (and when the phone connects): pause, so the
+        // car keeps hold of the set and its Play button works. The set's own Stop switches off.
+        override fun stop() { pause() }
+        override fun play() = resume()
+        override fun setPlayWhenReady(playWhenReady: Boolean) { if (playWhenReady) resume() else pause() }
+        // A Play while the player is idle or ended: tune in again rather than re-preparing.
+        override fun prepare() { if (player?.playbackState == Player.STATE_IDLE) { attempt = 0; reconnectNow() } }
     }
 
     /** ExoPlayer's usual renderers, with the [Meter] tapped into the audio path. */
@@ -367,7 +483,8 @@ class StreamService : Service() {
         val p = player ?: return
         when {
             p.isPlaying -> { set(State.PLAYING); startInForeground(if (!Store.sound(this)) "Muted — SOUND is off" else nowPlaying ?: "Playing") }
-            p.playbackState == Player.STATE_BUFFERING -> { set(State.TUNING); startInForeground("Tuning in…") }
+            !p.playWhenReady -> {}   // paused: shown as off (see onPlayWhenReadyChanged)
+            p.playbackState == Player.STATE_BUFFERING -> { set(State.TUNING); startInForeground(if (reconnecting) "Reconnecting…" else "Tuning in…") }
             // Paused for a phone call or another app: keep the set "on" so it resumes.
         }
     }
@@ -379,6 +496,9 @@ class StreamService : Service() {
     }
 
     private fun shutDown(keepError: Boolean = false) {
+        main.removeCallbacks(retry); main.removeCallbacks(stall); main.removeCallbacks(standby)
+        unwatchNetwork()
+        reconnecting = false; pausedAt = 0L
         session?.release(); session = null
         player?.release(); player = null
         if (!Caster.connected) clearSleep()   // handed over to a cast speaker: keep counting
@@ -388,6 +508,9 @@ class StreamService : Service() {
     }
 
     override fun onDestroy() {
+        main.removeCallbacks(retry); main.removeCallbacks(stall); main.removeCallbacks(standby)
+        unwatchNetwork()
+        reconnecting = false
         if (current === this) current = null
         session?.release(); session = null
         player?.release(); player = null
